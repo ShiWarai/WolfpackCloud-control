@@ -8,21 +8,30 @@ from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import StaticPool
 
 from app.config import get_settings
 
 settings = get_settings()
 
-# Создание async engine
-engine = create_async_engine(
-    settings.async_database_url,
-    echo=settings.debug,
-    pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10,
-)
+_sqlite = "sqlite" in settings.async_database_url
 
-# Фабрика сессий
+if _sqlite:
+    engine = create_async_engine(
+        settings.async_database_url,
+        echo=settings.debug,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+else:
+    engine = create_async_engine(
+        settings.async_database_url,
+        echo=settings.debug,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=10,
+    )
+
 async_session_maker = async_sessionmaker(
     engine,
     class_=AsyncSession,
@@ -31,7 +40,6 @@ async_session_maker = async_sessionmaker(
     autoflush=False,
 )
 
-# Алиас для фоновых задач (контекстный менеджер)
 async_session_factory = async_session_maker
 
 
@@ -49,9 +57,5 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db() -> None:
-    """Инициализация таблиц в БД.
-
-    Миграции управляются через Alembic (запускаются в entrypoint.sh).
-    Эта функция оставлена для совместимости, но не создаёт таблицы.
-    """
+    """Миграции выполняет Alembic в entrypoint; здесь заглушка для lifespan."""
     pass

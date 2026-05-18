@@ -2,7 +2,7 @@
 Приём «метрик» / heartbeat без InfluxDB (MVP): обновляет last_seen робота по токену.
 """
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy import select
@@ -52,6 +52,6 @@ async def ingest_metrics(
 ) -> Response:
     """Тело запроса игнорируется; обновляется last_seen_at."""
     await request.body()
-    robot.last_seen_at = datetime.now(UTC)
+    robot.last_seen_at = datetime.now(timezone.utc)
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

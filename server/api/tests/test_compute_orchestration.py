@@ -146,3 +146,23 @@ def test_auto_all_below_barrier_raises(settings: Settings) -> None:
     ]
     with pytest.raises(ValueError, match="достаточным оценочным запасом"):
         o._select_node_auto(nodes, settings, _preset())
+
+
+def test_select_node_manual_hostname_trims() -> None:
+    orch = ComputeOrchestrator()
+    assert orch.select_node([{}], manual_hostname="  node-z  ") == "node-z"
+
+
+def test_select_node_auto_requires_settings_and_preset(settings: Settings) -> None:
+    orch = ComputeOrchestrator()
+    preset = _preset()
+    with pytest.raises(ValueError, match="settings"):
+        orch.select_node([_node("a")], auto_orchestrate=True, preset=preset)
+    with pytest.raises(ValueError, match="preset"):
+        orch.select_node([_node("a")], auto_orchestrate=True, settings=settings)
+
+
+def test_select_node_requires_explicit_mode() -> None:
+    orch = ComputeOrchestrator()
+    with pytest.raises(ValueError, match="ноду"):
+        orch.select_node([_node("a")])

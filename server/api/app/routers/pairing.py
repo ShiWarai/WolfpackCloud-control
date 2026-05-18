@@ -5,7 +5,7 @@ API эндпоинты для привязки роботов.
 """
 
 import secrets
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -81,7 +81,7 @@ async def register_robot(
     await db.flush()
 
     # Создаём код привязки
-    expires_at = datetime.now(UTC) + timedelta(minutes=settings.pair_code_expiration_minutes)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.pair_code_expiration_minutes)
     pair_code = PairCode(
         code=request.pair_code,
         robot_id=robot.id,
@@ -128,7 +128,7 @@ async def get_pair_code_info(
         )
 
     # Проверяем истечение срока
-    if pair_code.status == PairCodeStatus.PENDING and pair_code.expires_at < datetime.now(UTC):
+    if pair_code.status == PairCodeStatus.PENDING and pair_code.expires_at < datetime.now(timezone.utc):
         pair_code.status = PairCodeStatus.EXPIRED
         await db.commit()
 
@@ -170,7 +170,7 @@ async def get_pair_status(
         )
 
     # Проверяем истечение срока
-    if pair_code.status == PairCodeStatus.PENDING and pair_code.expires_at < datetime.now(UTC):
+    if pair_code.status == PairCodeStatus.PENDING and pair_code.expires_at < datetime.now(timezone.utc):
         pair_code.status = PairCodeStatus.EXPIRED
         await db.commit()
 
@@ -246,7 +246,7 @@ async def confirm_pairing(
             detail="Код уже был подтверждён",
         )
 
-    if pair_code.status == PairCodeStatus.EXPIRED or pair_code.expires_at < datetime.now(UTC):
+    if pair_code.status == PairCodeStatus.EXPIRED or pair_code.expires_at < datetime.now(timezone.utc):
         pair_code.status = PairCodeStatus.EXPIRED
         await db.commit()
         raise HTTPException(
@@ -261,11 +261,11 @@ async def confirm_pairing(
         robot.name = request.robot_name
     robot.status = RobotStatus.ACTIVE
     robot.influxdb_token = influxdb_token
-    robot.last_seen_at = datetime.now(UTC)
+    robot.last_seen_at = datetime.now(timezone.utc)
     robot.owner_id = current_user.id
 
     pair_code.status = PairCodeStatus.CONFIRMED
-    pair_code.confirmed_at = datetime.now(UTC)
+    pair_code.confirmed_at = datetime.now(timezone.utc)
 
     await db.commit()
 

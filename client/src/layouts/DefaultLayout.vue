@@ -105,6 +105,7 @@ function isActive(path: string): boolean {
             <RouterLink 
               to="/orchestration" 
               class="term-sidebar-link" 
+              data-testid="nav-orchestration"
               :class="{ 'term-active': isActive('/orchestration') }"
             >
               <span class="term-sidebar-icon">

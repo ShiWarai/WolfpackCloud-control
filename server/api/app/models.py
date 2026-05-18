@@ -11,14 +11,14 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 
-class UserRole(enum.StrEnum):
+class UserRole(str, enum.Enum):
     """Роли пользователей."""
 
     USER = "user"
     ADMIN = "admin"
 
 
-class RobotStatus(enum.StrEnum):
+class RobotStatus(str, enum.Enum):
     """Статусы робота."""
 
     PENDING = "pending"
@@ -27,7 +27,7 @@ class RobotStatus(enum.StrEnum):
     ERROR = "error"
 
 
-class Architecture(enum.StrEnum):
+class Architecture(str, enum.Enum):
     """Архитектура процессора."""
 
     ARM64 = "arm64"
@@ -35,7 +35,7 @@ class Architecture(enum.StrEnum):
     ARMHF = "armhf"
 
 
-class PairCodeStatus(enum.StrEnum):
+class PairCodeStatus(str, enum.Enum):
     """Статусы кода привязки."""
 
     PENDING = "pending"
@@ -43,7 +43,7 @@ class PairCodeStatus(enum.StrEnum):
     EXPIRED = "expired"
 
 
-class WorkloadStatus(enum.StrEnum):
+class WorkloadStatus(str, enum.Enum):
     """Статус логического workload."""
 
     PENDING = "pending"

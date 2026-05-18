@@ -322,7 +322,7 @@ onUnmounted(() => {
 <template>
   <DefaultLayout>
     <div class="term-page-title-row">
-      <h1 class="term-page-title">Ресурсы кластера</h1>
+      <h1 class="term-page-title" data-testid="orchestration-heading">Ресурсы кластера</h1>
       <div class="orchestration-title-actions">
         <button
           type="button"

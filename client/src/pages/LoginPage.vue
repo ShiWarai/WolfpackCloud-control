@@ -40,6 +40,7 @@ function handleLogin() {
           type="button"
           class="term-btn term-btn-primary"
           style="width: 100%;"
+          data-testid="login-keycloak"
           @click="handleLogin"
         >
           Войти через Keycloak

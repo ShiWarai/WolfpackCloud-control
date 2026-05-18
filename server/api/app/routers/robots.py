@@ -4,7 +4,7 @@ API эндпоинты для управления роботами.
 CRUD операции над зарегистрированными роботами с разграничением доступа по пользователям.
 """
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
@@ -163,7 +163,7 @@ async def update_robot(
     for field, value in update_dict.items():
         setattr(robot, field, value)
 
-    robot.updated_at = datetime.now(UTC)
+    robot.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(robot)
 
@@ -236,7 +236,7 @@ async def robot_heartbeat(
             detail="Нет доступа к этому роботу",
         )
 
-    robot.last_seen_at = datetime.now(UTC)
+    robot.last_seen_at = datetime.now(timezone.utc)
     if robot.status == RobotStatus.INACTIVE:
         robot.status = RobotStatus.ACTIVE
 

@@ -5,7 +5,7 @@
 """
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import update
@@ -23,7 +23,7 @@ scheduler = AsyncIOScheduler()
 
 async def mark_inactive_robots() -> None:
     """Помечает роботов как неактивных если метрики не приходили дольше порога."""
-    threshold = datetime.now(UTC) - timedelta(seconds=INACTIVITY_THRESHOLD_SECONDS)
+    threshold = datetime.now(timezone.utc) - timedelta(seconds=INACTIVITY_THRESHOLD_SECONDS)
 
     async with async_session_factory() as session:
         result = await session.execute(
