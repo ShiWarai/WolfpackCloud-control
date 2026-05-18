@@ -6,8 +6,10 @@
  *   ACCESS_TOKEN  — Bearer JWT Keycloak (опционально для защищённых маршрутов)
  *   INGEST_TOKEN  — токен rosout ingest (опционально; включите блок ниже при необходимости)
  *
+ * Живость API: GET `${BASE_URL}/api/openapi.json` (подходит под Ingress с префиксом `/api`).
+ *
  * Пример:
- *   k6 run control-api-smoke.js -e BASE_URL=https://api.example.com -e ACCESS_TOKEN="$(cat .token)"
+ *   k6 run control-api-smoke.js -e BASE_URL=https://wolfpack.robotics-rtuitlab.ru -e ACCESS_TOKEN="$(cat .token)"
  *
  * Фон: включённые compute-peer по
  *   deploy/k3s/wolfpackcloud-control-peers/README.md
@@ -23,8 +25,9 @@ export const options = {
     { duration: "10s", target: 0 },
   ],
   thresholds: {
-    http_req_failed: ["rate<0.05"],
-    http_req_duration: ["p(95)<2000"],
+    checks: ["rate>=0.95"],
+    // Под VU и через Ingress p95 часто >2s на cluster/* — смок про корректность, не SLA.
+    http_req_duration: ["p(95)<8000"],
   },
 };
 
@@ -33,13 +36,14 @@ const token = (__ENV.ACCESS_TOKEN || "").trim();
 const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
 
 export default function () {
-  let res = http.get(`${base}/health`);
+  // Снаружи через Ingress API под префиксом /api; «/health» на том же хосте может отдавать не JSON API.
+  let res = http.get(`${base}/api/openapi.json`);
   check(res, {
-    "health status 200": (r) => r.status === 200,
-    "health json ok": (r) => {
+    "openapi status 200": (r) => r.status === 200,
+    "openapi json looks valid": (r) => {
       try {
         const b = r.json();
-        return b && b.status === "ok";
+        return !!(b && b.openapi && b.info && b.info.title);
       } catch {
         return false;
       }

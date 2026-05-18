@@ -8,7 +8,7 @@ export const workloadsApi = {
     })
   },
 
-  /** Произвольный Deployment в namespace zenoh — только realm admin в Keycloak. */
+  /** Произвольный Deployment в namespace zenoh — любой залогиненный пользователь (кроме защищённых имён). */
   async migrateByDeploymentName(deploymentName: string, nodeHostname: string | null) {
     await apiClient.post(`/workloads/by-name/${encodeURIComponent(deploymentName)}/migrate`, {
       node_hostname: nodeHostname,

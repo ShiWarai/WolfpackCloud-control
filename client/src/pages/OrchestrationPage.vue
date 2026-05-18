@@ -207,20 +207,7 @@ async function onDropNode(nodeName: string, ev: DragEvent) {
   }
   error.value = null
   try {
-    if (authStore.isAdmin) {
-      await workloadsApi.migrateByDeploymentName(dep, nodeName)
-    } else {
-      try {
-        await workloadsApi.migrateOwnedWorkload(dep, nodeName)
-      } catch (e1: unknown) {
-        const er1 = e1 as { response?: { status?: number } }
-        if (er1.response?.status === 404) {
-          await workloadsApi.migrateByDeploymentName(dep, nodeName)
-        } else {
-          throw e1
-        }
-      }
-    }
+    await workloadsApi.migrateByDeploymentName(dep, nodeName)
     await load({ quiet: true })
     flashSuccess(`Перенос запущен: «${dep}» → ${nodeName}`)
   } catch (e: unknown) {
@@ -228,11 +215,11 @@ async function onDropNode(nodeName: string, ev: DragEvent) {
     const err = e as { response?: { data?: { detail?: string }; status?: number } }
     const detail = err.response?.data?.detail
     if (err.response?.status === 403) {
-      error.value = detail || 'Недостаточно прав (нужна роль admin в Keycloak для чужих деплоев).'
+      error.value = detail || 'Недостаточно прав.'
     } else if (err.response?.status === 404) {
       error.value =
         detail ||
-        'Этот Deployment не из каталога Control — назначьте роль admin в Keycloak или создайте workload через API/UI.'
+        'Deployment не найден в namespace или недоступен для переноса.'
     } else {
       error.value = detail || 'Ошибка миграции'
     }

@@ -33,7 +33,7 @@ async def test_auth_me_requires_bearer(async_client):
 
 
 @pytest.mark.asyncio
-async def test_admin_migrate_by_name(async_client, make_access_token, monkeypatch):
+async def test_migrate_by_name_any_authenticated_user(async_client, make_access_token, monkeypatch):
     calls: list[tuple[str, str | None]] = []
 
     def fake_patch(settings, deployment_name, node_hostname):  # noqa: ARG001
@@ -50,10 +50,10 @@ async def test_admin_migrate_by_name(async_client, make_access_token, monkeypatc
     monkeypatch.setattr("app.routers.workloads._run_k8s", instant)
 
     token = make_access_token(
-        sub="admin-sub",
-        email="admin@test.local",
-        preferred_username="adminuser",
-        realm_roles=["admin"],
+        sub="plain-sub",
+        email="plain@test.local",
+        preferred_username="plainuser",
+        realm_roles=["user"],
     )
     r = await async_client.post(
         "/api/workloads/by-name/preset-peer/migrate",
@@ -127,13 +127,24 @@ async def test_migrate_value_error_maps_to_400(async_client, make_access_token, 
     monkeypatch.setattr("app.routers.workloads._run_k8s", instant)
 
     token = make_access_token(
-        sub="adm2",
-        email="admin2@test.local",
-        realm_roles=["admin"],
+        sub="plain2",
+        email="plain2@test.local",
+        realm_roles=["user"],
     )
     r = await async_client.post(
         "/api/workloads/by-name/x/migrate",
         json={"node_hostname": "ghost"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_migrate_by_name_blocks_zenoh_router(async_client, make_access_token):
+    token = make_access_token(sub="u", email="u@test.local", realm_roles=["user"])
+    r = await async_client.post(
+        "/api/workloads/by-name/zenoh-router/migrate",
+        json={"node_hostname": "any-node"},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 400

@@ -6,13 +6,12 @@ import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import LogicalNode, User, UserRole
+from app.models import User
 from app.schemas import (
     ComputePresetLaunchRequest,
     ComputePresetLaunchResponse,
@@ -165,22 +164,13 @@ async def cluster_launch_compute_preset(
 
 
 async def _user_may_stop_deployment(
-    db: AsyncSession,
-    user: User,
+    _db: AsyncSession,
+    _user: User,
     deployment_name: str,
 ) -> bool:
     if deployment_name in _PROTECTED_DEPLOYMENT_NAMES:
         return False
-    preset_names = {p.deployment_name for p in list_compute_presets()}
-    if deployment_name in preset_names:
-        return True
-    if user.role == UserRole.ADMIN:
-        return True
-    r = await db.execute(
-        select(LogicalNode).where(LogicalNode.k8s_deployment_name == deployment_name),
-    )
-    ln = r.scalar_one_or_none()
-    return ln is not None and ln.owner_id == user.id
+    return True
 
 
 @router.post("/deployments/{deployment_name}/stop", summary="Replicas=0 для Deployment в zenoh")
@@ -189,7 +179,7 @@ async def cluster_stop_deployment(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> dict[str, object]:
-    """Остановка пода (scale 0). Пресеты — любой пользователь; иначе admin или владелец workload."""
+    """Остановка пода (scale 0). Любой пользователь; исключение — защищённые деплойменты (см. zenoh-router)."""
     if deployment_name in _PROTECTED_DEPLOYMENT_NAMES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

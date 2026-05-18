@@ -35,9 +35,6 @@ spec:
                   - key: kubernetes.io/arch
                     operator: In
                     values: ["arm64"]
-                  - key: kubernetes.io/hostname
-                    operator: In
-                    values: ["orangepi5-water-melon"]
       containers:
         - name: nginx
           image: 10.43.50.10:5000/wolfpack-control-client:latest-arm64

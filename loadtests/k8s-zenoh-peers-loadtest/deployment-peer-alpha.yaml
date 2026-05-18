@@ -1,0 +1,64 @@
+# Hammer: только arm64; не на sber и не на alphie-phone (hostname из кластера).
+# Образ arm64 для обеих ролей alpha/beta.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: compute-peer-alpha
+  labels:
+    app.kubernetes.io/name: compute-peer-alpha
+    app.kubernetes.io/component: wolfpackcloud-compute-instance-peer
+    wolfpackcloud.dev/loadtest: "true"
+spec:
+  replicas: 40
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: compute-peer-alpha
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: compute-peer-alpha
+        app.kubernetes.io/component: wolfpackcloud-compute-instance-peer
+        wolfpackcloud.dev/loadtest: "true"
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/arch
+                    operator: In
+                    values:
+                      - arm64
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values:
+                      - sber
+                      - alphie-phone-1
+      containers:
+        - name: peer
+          image: 10.43.50.10:5000/wolfpackcloud-compute-instance-peer:humble-arm64
+          imagePullPolicy: Always
+          env:
+            - name: RMW_IMPLEMENTATION
+              value: rmw_zenoh_cpp
+            - name: ROS_DOMAIN_ID
+              value: "0"
+            - name: ZENOH_CONFIG_OVERRIDE
+              value: >-
+                mode="client";connect/endpoints=["tcp/zenoh-router.wolfpackcloud-zenoh.svc.cluster.local:7447"];timestamping/enabled={router:false,peer:false,client:false}
+          args:
+            - "publish_topic:=/topic_a"
+            - "subscribe_topic:=/topic_b"
+            - "peer_shard:=0"
+            - "pulse_period_sec:=0.15"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 768Mi

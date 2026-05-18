@@ -24,10 +24,6 @@ spec:
                   - key: kubernetes.io/arch
                     operator: In
                     values: ["arm64"]
-                  # БД Keycloak (emptyDir): на второй рабочей Orange Pi, рядом с control Postgres / PVC.
-                  - key: kubernetes.io/hostname
-                    operator: In
-                    values: ["orangepi5-abandon-alien"]
       containers:
         - name: postgres
           image: postgres:16-alpine
@@ -97,10 +93,6 @@ spec:
                   - key: kubernetes.io/arch
                     operator: In
                     values: ["arm64"]
-                  # Разнос с banzai и с Postgres Keycloak; Traefik стабильно ходит на water-melon.
-                  - key: kubernetes.io/hostname
-                    operator: In
-                    values: ["orangepi5-water-melon"]
       volumes:
         - name: realm-import
           configMap:
@@ -182,6 +174,8 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    # Длинные ответы Keycloak на ARM (ServersTransport CRD в этом namespace).
+    traefik.ingress.kubernetes.io/service.serverstransport: keycloak-backend@kubernetescrd
 spec:
   ingressClassName: traefik
   tls:

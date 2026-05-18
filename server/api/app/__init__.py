@@ -1,7 +1,3 @@
-"""
-WolfpackCloud Monitoring API
-
-FastAPI сервис для привязки и управления роботами в системе мониторинга.
-"""
+"""WolfpackCloud Control API."""
 
 __version__ = "0.1.0"

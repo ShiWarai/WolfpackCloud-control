@@ -14,3 +14,4 @@ client/dist/
 .mypy_cache/
 *.egg-info/
 .DS_Store
+loadtests/.token

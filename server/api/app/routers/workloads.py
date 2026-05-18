@@ -12,13 +12,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_db
-from app.deps import get_current_admin, get_current_user
+from app.deps import get_current_user
 from app.models import Architecture, LogicalNode, Network, User, UserRole, WorkloadStatus
 from app.schemas import WorkloadCreateRequest, WorkloadMigrateRequest, WorkloadResponse
 from app.services import k8s as k8s_svc
 
 router = APIRouter(prefix="/api/workloads", tags=["workloads"])
 settings = get_settings()
+
+# Не двигать инфраструктурные деплойменты из UI (как в cluster.stop).
+_NON_DRAGGABLE_DEPLOYMENTS = frozenset({"zenoh-router"})
 
 
 async def _run_k8s(fn, *args, **kwargs):
@@ -168,9 +171,14 @@ async def delete_workload(
 async def migrate_any_deployment(
     deployment_name: str,
     body: WorkloadMigrateRequest,
-    user: User = Depends(get_current_admin),
+    _user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Миграция любого Deployment в namespace (только admin)."""
+    """Миграция любого Deployment в namespace zenoh — любой залогиненный пользователь."""
+    if deployment_name in _NON_DRAGGABLE_DEPLOYMENTS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Этот деплоймент нельзя переносить из интерфейса",
+        )
     try:
         await _run_k8s(
             k8s_svc.patch_deployment_node_selector,
