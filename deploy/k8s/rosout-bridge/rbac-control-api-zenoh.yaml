@@ -1,0 +1,26 @@
+# Применяется вместе с kustomize rosout-bridge (namespace wolfpackcloud-zenoh).
+# Не класть в control/kustomization: там namespace: wolfpackcloud-control и Role уезжает не туда.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: control-zenoh-namespace
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: control-api-zenoh
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: control-zenoh-namespace
+subjects:
+  - kind: ServiceAccount
+    name: control-api
+    namespace: wolfpackcloud-control

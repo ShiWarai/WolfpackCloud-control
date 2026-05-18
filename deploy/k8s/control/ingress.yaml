@@ -1,0 +1,33 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: wolfpackcloud-control-public
+  namespace: wolfpackcloud-control
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Только websecure (443), чтобы не совпадать с другими HTTPS entrypoints Traefik.
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - wolfpack.robotics-rtuitlab.ru
+      secretName: tls-wolfpack-robotics-rtuitlab-ru
+  rules:
+    - host: wolfpack.robotics-rtuitlab.ru
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: control-api
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: control-client
+                port:
+                  number: 80

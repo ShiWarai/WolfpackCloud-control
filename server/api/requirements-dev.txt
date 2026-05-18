@@ -1,0 +1,11 @@
+# Dev-зависимости для тестирования и линтинга
+# Устанавливать поверх requirements.txt:
+#   pip install -r requirements.txt -r requirements-dev.txt
+
+# Тестирование
+pytest>=8.3.0
+pytest-asyncio>=0.24.0
+pytest-cov>=6.0.0
+
+# Линтинг
+ruff>=0.8.0

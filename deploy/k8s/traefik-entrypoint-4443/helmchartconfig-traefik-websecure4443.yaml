@@ -1,0 +1,20 @@
+# Применение: kubectl apply -k deploy/k8s/traefik-entrypoint-4443/
+# При уже существующем HelmChartConfig traefik объедините valuesContent вручную.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    ports:
+      websecure4443:
+        port: 4443
+        expose:
+          default: true
+        exposedPort: 4443
+        protocol: TCP
+        tls:
+          enabled: true
+    additionalArguments:
+      - "--entryPoints.websecure4443.address=:4443"

@@ -1,0 +1,58 @@
+{
+  "realm": "wolfpack-control",
+  "enabled": true,
+  "displayName": "WolfpackCloud Control",
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "roles": {
+    "realm": [
+      {"name": "user", "description": "Обычный пользователь WolfpackCloud Control"},
+      {"name": "admin", "description": "Оркестрация и администрирование workloads"}
+    ]
+  },
+  "defaultRoles": ["user"],
+  "clients": [
+    {
+      "clientId": "wolfpack-control-web",
+      "name": "WolfpackCloud Control SPA",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": false,
+      "redirectUris": [
+        "https://wolfpack.robotics-rtuitlab.ru/*",
+        "http://localhost:9200/*",
+        "http://127.0.0.1:9200/*"
+      ],
+      "webOrigins": [
+        "https://wolfpack.robotics-rtuitlab.ru",
+        "https://auth.wolfpack.robotics-rtuitlab.ru"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "fullScopeAllowed": true
+    },
+    {
+      "clientId": "wolfpack-control-api",
+      "name": "Control API (audience / документация)",
+      "enabled": true,
+      "publicClient": false,
+      "bearerOnly": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [],
+      "webOrigins": [],
+      "fullScopeAllowed": true
+    }
+  ]
+}
