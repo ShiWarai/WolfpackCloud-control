@@ -3,6 +3,8 @@
 """
 
 from contextlib import asynccontextmanager
+import logging
+import sys
 from typing import Any
 
 from fastapi import FastAPI, Request, status
@@ -29,6 +31,21 @@ from app.schemas import ErrorResponse, HealthResponse
 from app.tasks import start_scheduler, stop_scheduler
 
 settings = get_settings()
+
+
+def _configure_app_package_logging() -> None:
+    """Uvicorn оставляет root на WARNING — иначе INFO от app.* не попадает в stdout (kubectl logs)."""
+    log = logging.getLogger("app")
+    if log.handlers:
+        return
+    log.setLevel(logging.INFO)
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s: %(message)s"))
+    log.addHandler(handler)
+    log.propagate = False
+
+
+_configure_app_package_logging()
 
 # OAuth login в Swagger — только публичный SPA-клиент; не путать с JWT audience/resource server.
 _swagger_oauth_client_id = (settings.keycloak_swagger_client_id or "").strip() or "wolfpack-control-web"

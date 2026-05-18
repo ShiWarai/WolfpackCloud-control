@@ -89,6 +89,8 @@ async def cluster_compute_presets(
             publish_topic=p.publish_topic,
             subscribe_topic=p.subscribe_topic,
             peer_shard=p.peer_shard,
+            memory_request_mib=p.memory_request_mib,
+            cpu_request_millicores=p.cpu_request_millicores,
         )
         for p in list_compute_presets()
     ]
@@ -100,15 +102,19 @@ async def cluster_launch_compute_preset(
     body: ComputePresetLaunchRequest,
     _user: User = Depends(get_current_user),
 ) -> ComputePresetLaunchResponse:
-    """Запуск пресета на выбранной ноде или со случайным выбором Ready worker/dev."""
+    """Запуск пресета на выбранной ноде или авторазмещение (гибридная оркестрация)."""
     preset = get_compute_preset(preset_id)
     if not preset:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пресет не найден")
 
     nodes = await _run_k8s(k8s_svc.list_worker_nodes, settings)
+    if body.auto_orchestrate:
+        nodes = await _run_k8s(k8s_svc.enrich_worker_nodes_with_scheduling_stats, settings, nodes)
     try:
         chosen_host = _orchestrator.select_node(
             nodes,
+            settings=settings if body.auto_orchestrate else None,
+            preset=preset if body.auto_orchestrate else None,
             manual_hostname=(
                 None
                 if body.auto_orchestrate

@@ -8,7 +8,9 @@ const authStore = useAuthStore()
 
 const redirectPath = computed(() => {
   const r = route.query.redirect as string | undefined
-  return r && r.startsWith('/') ? r : '/dashboard'
+  if (!r || !r.startsWith('/')) return '/dashboard'
+  // Не показывать в UI и не слать в Keycloak hash от check-sso (error=login_required)
+  return r.split('#')[0] || '/dashboard'
 })
 
 function handleLogin() {

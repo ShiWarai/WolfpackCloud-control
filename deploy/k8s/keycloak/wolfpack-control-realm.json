@@ -22,17 +22,20 @@
       "protocol": "openid-connect",
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
-      "directAccessGrantsEnabled": false,
+      "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": false,
       "authorizationServicesEnabled": false,
       "redirectUris": [
         "https://wolfpack.robotics-rtuitlab.ru/*",
         "http://localhost:9200/*",
-        "http://127.0.0.1:9200/*"
+        "http://127.0.0.1:9200/*",
+        "https://oauth.pstmn.io/v1/callback",
+        "https://oauth.pstmn.io/*"
       ],
       "webOrigins": [
         "https://wolfpack.robotics-rtuitlab.ru",
-        "https://auth.wolfpack.robotics-rtuitlab.ru"
+        "https://auth.wolfpack.robotics-rtuitlab.ru",
+        "https://oauth.pstmn.io"
       ],
       "attributes": {
         "pkce.code.challenge.method": "S256"

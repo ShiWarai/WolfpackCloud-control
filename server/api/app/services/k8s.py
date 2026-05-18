@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import defaultdict
 from typing import Any
 
 from kubernetes import client, config
@@ -28,6 +29,7 @@ from kubernetes.client import (
 
 from app.config import Settings
 from app.services.compute_presets import ComputePreset
+from app.services.resource_quantity import parse_k8s_cpu_millicores, parse_k8s_memory_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +97,106 @@ def list_worker_nodes(settings: Settings) -> list[dict[str, Any]]:
                 "labels": dict(labels),
             }
         )
+    return out
+
+
+# Суммирование requests по нодам (оценка загрузки для оркестрации)
+_POD_PHASE_SKIP_FOR_REQUESTS = frozenset({"Succeeded", "Failed"})
+
+
+def _container_requests_mem_cpu(container: Any) -> tuple[int, int]:
+    req = container.resources.requests if container.resources else None
+    if not req:
+        return 0, 0
+    mem = parse_k8s_memory_bytes(req.get("memory"))
+    cpu = parse_k8s_cpu_millicores(req.get("cpu"))
+    return mem, cpu
+
+
+def _pod_total_requests(pod: Any) -> tuple[int, int]:
+    mem_t = 0
+    cpu_t = 0
+    for c in pod.spec.containers or []:
+        m, c_ = _container_requests_mem_cpu(c)
+        mem_t += m
+        cpu_t += c_
+    for c in pod.spec.init_containers or []:
+        m, c_ = _container_requests_mem_cpu(c)
+        mem_t += m
+        cpu_t += c_
+    return mem_t, cpu_t
+
+
+def aggregate_pod_requests_by_node(settings: Settings) -> dict[str, dict[str, int]]:
+    """Сумма requests.memory / requests.cpu по всем namespace для каждой ноды (без Failed/Succeeded)."""
+    _ = settings
+    _configure_k8s()
+    v1 = client.CoreV1Api()
+    totals: dict[str, dict[str, int]] = defaultdict(lambda: {"memory_bytes": 0, "cpu_milli": 0})
+    pods = v1.list_pod_for_all_namespaces()
+    for pod in pods.items or []:
+        phase = pod.status.phase if pod.status else None
+        if phase in _POD_PHASE_SKIP_FOR_REQUESTS:
+            continue
+        node = pod.spec.node_name if pod.spec else None
+        if not node:
+            continue
+        mem, cpu = _pod_total_requests(pod)
+        totals[node]["memory_bytes"] += mem
+        totals[node]["cpu_milli"] += cpu
+    return {k: dict(v) for k, v in totals.items()}
+
+
+def node_allocatable_by_name(settings: Settings) -> dict[str, tuple[int, int]]:
+    """Имя ноды → (allocatable memory bytes, allocatable cpu millicores)."""
+    _ = settings
+    _configure_k8s()
+    v1 = client.CoreV1Api()
+    out: dict[str, tuple[int, int]] = {}
+    for n in v1.list_node().items or []:
+        name = n.metadata.name
+        if not name:
+            continue
+        alloc = n.status.allocatable or {}
+        mem_s = alloc.get("memory")
+        cpu_s = alloc.get("cpu")
+        out[name] = (parse_k8s_memory_bytes(mem_s), parse_k8s_cpu_millicores(cpu_s))
+    return out
+
+
+def enrich_worker_nodes_with_scheduling_stats(
+    settings: Settings,
+    nodes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Доп. поля для гибридной оркестрации: allocatable, сумма requests, оценка free, latency для tie-break."""
+    by_node_req = aggregate_pod_requests_by_node(settings)
+    alloc_map = node_allocatable_by_name(settings)
+    latency_key = (settings.k8s_orchestration_latency_label or "").strip()
+    out: list[dict[str, Any]] = []
+    for n in nodes:
+        name = n["name"]
+        mem_a, cpu_a = alloc_map.get(name, (0, 0))
+        req = by_node_req.get(name, {"memory_bytes": 0, "cpu_milli": 0})
+        mem_r = int(req["memory_bytes"])
+        cpu_r = int(req["cpu_milli"])
+        labels = dict(n.get("labels") or {})
+        latency_ms = 0
+        if latency_key:
+            raw = labels.get(latency_key)
+            if raw is not None:
+                try:
+                    latency_ms = int(str(raw).strip())
+                except ValueError:
+                    latency_ms = 0
+        row = dict(n)
+        row["allocatable_memory_bytes"] = mem_a
+        row["allocatable_cpu_milli"] = cpu_a
+        row["requested_memory_bytes"] = mem_r
+        row["requested_cpu_milli"] = cpu_r
+        row["estimated_free_memory_bytes"] = max(0, mem_a - mem_r)
+        row["estimated_free_cpu_milli"] = max(0, cpu_a - cpu_r)
+        row["orchestration_latency_ms"] = latency_ms
+        out.append(row)
     return out
 
 

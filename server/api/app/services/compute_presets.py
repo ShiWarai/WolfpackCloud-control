@@ -10,6 +10,10 @@ import yaml
 _PRESETS_PATH = Path(__file__).resolve().parent.parent / "data" / "compute_presets.yaml"
 
 
+_DEFAULT_MEMORY_MIB = 256
+_DEFAULT_CPU_MILLI = 100
+
+
 @dataclass(frozen=True, slots=True)
 class ComputePreset:
     """Описание одного заготовленного peer-deployment."""
@@ -20,6 +24,10 @@ class ComputePreset:
     publish_topic: str
     subscribe_topic: str
     peer_shard: int
+    #: Запрос памяти задачи T (MiB), как в Deployment requests.memory
+    memory_request_mib: int
+    #: Запрос CPU задачи T (millicores), как в Deployment requests.cpu (100m → 100)
+    cpu_request_millicores: int
 
 
 def _load_raw() -> dict:
@@ -40,6 +48,10 @@ def list_compute_presets() -> list[ComputePreset]:
                 publish_topic=str(row["publish_topic"]),
                 subscribe_topic=str(row["subscribe_topic"]),
                 peer_shard=int(row["peer_shard"]),
+                memory_request_mib=int(row.get("memory_request_mib", _DEFAULT_MEMORY_MIB)),
+                cpu_request_millicores=int(
+                    row.get("cpu_request_millicores", _DEFAULT_CPU_MILLI),
+                ),
             )
         )
     return out

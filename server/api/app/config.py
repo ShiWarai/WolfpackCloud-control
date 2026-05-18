@@ -58,6 +58,12 @@ class Settings(BaseSettings):
         "10.43.50.10:5000/wolfpackcloud-compute-instance-peer:humble-arm64"
     )
 
+    #: Веса скоринга оркестрации: w_ram * q_ram + w_cpu * q_cpu (формула 3)
+    orchestration_weight_ram: float = 1.0
+    orchestration_weight_cpu: float = 1.0
+    #: Метка ноды для разрыва ничьих f (меньше ms — лучше). Пусто — только имя ноды.
+    k8s_orchestration_latency_label: str = ""
+
     rosout_ingest_token: str = "change-me-ingest-token"
 
     keycloak_account_base_url: str | None = None

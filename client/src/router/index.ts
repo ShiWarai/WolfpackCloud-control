@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vue-router'
 
 import { keycloak } from '@/keycloak'
 import { useAuthStore } from '@/stores'
@@ -61,6 +61,12 @@ const router = createRouter({
 
 let initialized = false
 
+/** Путь для возврата после входа: path + query, без hash.
+ * Keycloak при check-sso кладёт в hash `error=login_required` — его нельзя класть в redirect_uri. */
+function safeRedirectForAuth(to: RouteLocationNormalized): string {
+  return to.fullPath.split('#')[0] || '/dashboard'
+}
+
 router.beforeEach(async (to, _from, next) => {
   const authStore = useAuthStore()
 
@@ -79,7 +85,7 @@ router.beforeEach(async (to, _from, next) => {
   const loggedIn = keycloak.authenticated && !!authStore.user
 
   if (to.meta.requiresAuth && !loggedIn) {
-    next({ name: 'login', query: { redirect: to.fullPath } })
+    next({ name: 'login', query: { redirect: safeRedirectForAuth(to) } })
   } else if (to.meta.requiresGuest && loggedIn) {
     next({ name: 'dashboard' })
   } else {

@@ -36,6 +36,8 @@ export interface ComputePreset {
   publish_topic: string
   subscribe_topic: string
   peer_shard: number
+  memory_request_mib: number
+  cpu_request_millicores: number
 }
 
 export interface ComputePresetLaunchBody {

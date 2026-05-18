@@ -310,6 +310,8 @@ class ComputePresetResponse(BaseModel):
     publish_topic: str
     subscribe_topic: str
     peer_shard: int
+    memory_request_mib: int
+    cpu_request_millicores: int
 
 
 class ComputePresetLaunchRequest(BaseModel):
@@ -318,7 +320,7 @@ class ComputePresetLaunchRequest(BaseModel):
     node_hostname: str | None = Field(None, max_length=253)
     auto_orchestrate: bool = Field(
         default=False,
-        description="Сервер выбирает ноду (пока случайно среди Ready worker/dev)",
+        description="Автовыбор ноды: статический отсев + скоринг по запасу RAM/CPU",
     )
 
     @model_validator(mode="after")

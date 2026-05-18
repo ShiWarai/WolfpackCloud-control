@@ -1,0 +1,238 @@
+{
+  "info": {
+    "name": "WolfpackCloud Control API (запросы)",
+    "description": "OAuth2 на уровне коллекции (или окружения WolfpackCloud-Control.postman_environment.json):\n- Grant: Authorization Code (PKCE) или Password Credentials\n- Auth URL: {{keycloak_url}}/realms/{{keycloak_realm}}/protocol/openid-connect/auth\n- Access Token URL: .../protocol/openid-connect/token\n- Client ID: wolfpack-control-web (публичный, без secret)\n- Callback (PKCE): https://oauth.pstmn.io/v1/callback\n- Username / Password — пользователь realm wolfpack-control, созданный вручную в Keycloak Admin (не учётка master admin).\n\nПеременные: base_url, deployment_name, preset_id, target_node; в окружении — keycloak_* и keycloak_username.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "https://wolfpack.robotics-rtuitlab.ru" },
+    { "key": "deployment_name", "value": "compute-peer-gamma" },
+    { "key": "preset_id", "value": "compute-peer-gamma" },
+    { "key": "target_node", "value": "orangepi5-friendly-banzai" }
+  ],
+  "auth": { "type": "inherit" },
+  "item": [
+    {
+      "name": "Auth",
+      "auth": { "type": "inherit" },
+      "item": [
+        {
+          "name": "Текущий пользователь",
+          "request": {
+            "auth": { "type": "inherit" },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/auth/me",
+            "description": "Проверка JWT после OAuth."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Account",
+      "auth": { "type": "inherit" },
+      "item": [
+        {
+          "name": "Аккаунт и сети",
+          "request": {
+            "auth": { "type": "inherit" },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/account",
+            "description": "Профиль, сети, счётчики роботов (admin видит все сети)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cluster",
+      "auth": { "type": "inherit" },
+      "item": [
+        {
+          "name": "Ноды пула",
+          "request": {
+            "auth": { "type": "inherit" },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/cluster/nodes"
+          }
+        },
+        {
+          "name": "Deployments zenoh",
+          "request": {
+            "auth": { "type": "inherit" },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/cluster/deployments"
+          }
+        },
+        {
+          "name": "Поды zenoh",
+          "request": {
+            "auth": { "type": "inherit" },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/cluster/pods"
+          }
+        },
+        {
+          "name": "Оркестрация (ноды + поды для UI)",
+          "request": {
+            "auth": { "type": "inherit" },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/cluster/orchestration"
+          }
+        },
+        {
+          "name": "Каталог compute-presets",
+          "request": {
+            "auth": { "type": "inherit" },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/cluster/compute-presets"
+          }
+        },
+        {
+          "name": "Запуск пресета (ручная нода)",
+          "request": {
+            "auth": { "type": "inherit" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"node_hostname\": \"{{target_node}}\",\n  \"auto_orchestrate\": false\n}"
+            },
+            "url": "{{base_url}}/api/cluster/compute-presets/{{preset_id}}/launch",
+            "description": "node_hostname = kubernetes.io/hostname"
+          }
+        },
+        {
+          "name": "Запуск пресета (авто-оркестрация)",
+          "request": {
+            "auth": { "type": "inherit" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"node_hostname\": null,\n  \"auto_orchestrate\": true\n}"
+            },
+            "url": "{{base_url}}/api/cluster/compute-presets/{{preset_id}}/launch"
+          }
+        },
+        {
+          "name": "Остановить deployment (replicas=0)",
+          "request": {
+            "auth": { "type": "inherit" },
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/api/cluster/deployments/{{deployment_name}}/stop",
+            "description": "Пресеты — любой пользователь; иначе владелец workload или admin."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Workloads",
+      "auth": { "type": "inherit" },
+      "item": [
+        {
+          "name": "Список workloads",
+          "request": {
+            "auth": { "type": "inherit" },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/workloads"
+          }
+        },
+        {
+          "name": "Миграция своего workload (из БД)",
+          "request": {
+            "auth": { "type": "inherit" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"node_hostname\": \"{{target_node}}\"\n}"
+            },
+            "url": "{{base_url}}/api/workloads/{{deployment_name}}/migrate",
+            "description": "Patch nodeSelector у Deployment в namespace zenoh; k8s_deployment_name из своей записи LogicalNode."
+          }
+        },
+        {
+          "name": "Миграция любого deployment (только admin)",
+          "request": {
+            "auth": { "type": "inherit" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"node_hostname\": \"{{target_node}}\"\n}"
+            },
+            "url": "{{base_url}}/api/workloads/by-name/{{deployment_name}}/migrate",
+            "description": "Роль admin в Keycloak → User.role ADMIN в Control API."
+          }
+        },
+        {
+          "name": "Start workload",
+          "request": {
+            "auth": { "type": "inherit" },
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/api/workloads/{{deployment_name}}/start"
+          }
+        },
+        {
+          "name": "Stop workload",
+          "request": {
+            "auth": { "type": "inherit" },
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/api/workloads/{{deployment_name}}/stop"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Networks",
+      "auth": { "type": "inherit" },
+      "item": [
+        {
+          "name": "Список сетей",
+          "request": {
+            "auth": { "type": "inherit" },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/networks"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Robots / Pairing / Logs",
+      "auth": { "type": "inherit" },
+      "item": [
+        {
+          "name": "Роботы (коротко)",
+          "request": {
+            "auth": { "type": "inherit" },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/robots",
+            "description": "Полная схема: импорт OpenAPI или /api/docs"
+          }
+        },
+        {
+          "name": "Логи ROS (пример)",
+          "request": {
+            "auth": { "type": "inherit" },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/logs",
+            "description": "Параметры см. OpenAPI."
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -6,6 +6,8 @@ presets:
     publish_topic: /topic_a
     subscribe_topic: /topic_b
     peer_shard: 1
+    memory_request_mib: 256
+    cpu_request_millicores: 100
 
   - id: compute-peer-beta
     deployment_name: compute-peer-beta
@@ -13,6 +15,8 @@ presets:
     publish_topic: /topic_b
     subscribe_topic: /topic_a
     peer_shard: 2
+    memory_request_mib: 256
+    cpu_request_millicores: 100
 
   - id: compute-peer-gamma
     deployment_name: compute-peer-gamma
@@ -20,3 +24,5 @@ presets:
     publish_topic: /topic_c
     subscribe_topic: /topic_b
     peer_shard: 3
+    memory_request_mib: 256
+    cpu_request_millicores: 100

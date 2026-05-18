@@ -12,6 +12,15 @@ app.use(createPinia())
 async function bootstrap() {
   await initKeycloak()
 
+  if (
+    typeof window !== 'undefined' &&
+    window.location.hash &&
+    keycloak.authenticated &&
+    window.location.hash.includes('error=login_required')
+  ) {
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
+  }
+
   if (!import.meta.env.VITE_KEYCLOAK_URL) {
     console.error('Set VITE_KEYCLOAK_URL for OIDC')
   }

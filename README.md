@@ -62,11 +62,41 @@ S="${TAG}-${ARCH}"
 Дальше по порядку (из каталога **`WolfpackCloud-control`**, либо поправьте пути):
 
 1. **DNS:** `auth.wolfpack.robotics-rtuitlab.ru` → тот же адрес, что и основной сайт (LB/VPS).
-2. **Keycloak:** секреты в `deploy/k8s/keycloak/keycloak-stack.yaml`, затем `kubectl apply -k deploy/k8s/keycloak/` → namespace **`wolfpackcloud-auth`**. Имя realm OIDC **`wolfpack-control`** (в URL `/realms/wolfpack-control`) намеренно другое — это не Kubernetes namespace. Клиенты **`wolfpack-control-web`** / **`wolfpack-control-api`** и роли подтягиваются из импорта [wolfpack-control-realm.json](deploy/k8s/keycloak/wolfpack-control-realm.json).
+2. **Keycloak** — см. раздел [ниже](#keycloak-clean-deploy). Кратко: `keycloak-secrets.yaml` → `kubectl apply -k deploy/k8s/keycloak/` → namespace **`wolfpackcloud-auth`**. Realm OIDC **`wolfpack-control`**; клиенты и роли — из импорта [wolfpack-control-realm.json](deploy/k8s/keycloak/wolfpack-control-realm.json).
 3. Если realm **уже был импортирован раньше**, стратегия импорта `IGNORE_EXISTING` не обновит клиента: в **Keycloak Admin** → realm **wolfpack-control** → **Clients** → **wolfpack-control-web** проверьте **Web origins**: должны быть `https://wolfpack.robotics-rtuitlab.ru` и `https://auth.wolfpack.robotics-rtuitlab.ru` (без старого `:4443`).
-4. Создайте пользователя в realm **`wolfpack-control`** (или через master admin → Users) и назначьте роли **`user`** / **`admin`** по необходимости. Роль **`admin`** должна быть **realm role** (Realm roles) или client role у клиента **`wolfpack-control-web`** — оба варианта попадают в JWT и учитываются API. Либо задайте **`CONTROL_ADMIN_USERNAMES`** у API (через запятую: `preferred_username` или email) для явного списка операторов без роли в Keycloak.
+4. **Роли и доступ API:** роль **`admin`** — **realm role** или client role у **`wolfpack-control-web`**; оба варианта учитываются API. Либо **`CONTROL_ADMIN_USERNAMES`** у API (через запятую: `preferred_username` или email).
 5. **Control stack:** обновите **`control-api-env`** (`KEYCLOAK_ISSUER`, `KEYCLOAK_JWKS_URL` на новый хост auth), затем `kubectl apply -k deploy/k8s/control/` (namespace **`wolfpackcloud-control`**, Postgres PVC **10Gi**).
 6. **Rosout-bridge:** Secret **`rosout-bridge-secret`** в **`wolfpackcloud-zenoh`** (`ingest-token` = `ROSOUT_INGEST_TOKEN` у API), затем `kubectl apply -k deploy/k8s/rosout-bridge/`.
+
+<a id="keycloak-clean-deploy"></a>
+
+### Keycloak: чистый деплой и первый пользователь
+
+Импорт realm создаёт клиентов и роли, **но не учётки людей** в `wolfpack-control` — их задаёте вы (пароли в git не храним).
+
+**Деплой с нуля**
+
+```bash
+cd WolfpackCloud-control
+# Шаблон: cp deploy/k8s/keycloak/keycloak-secrets.example.yaml deploy/k8s/keycloak/keycloak-secrets.yaml
+kubectl apply -f deploy/k8s/keycloak/keycloak-secrets.yaml
+kubectl apply -k deploy/k8s/keycloak/
+kubectl rollout status deployment/keycloak -n wolfpackcloud-auth --timeout=600s
+```
+
+Подождите, пока Ingress и TLS для `auth.wolfpack…` станут доступны.
+
+**Создать пользователя realm (UI или Postman / Password Grant)**
+
+1. Откройте **Keycloak Admin Console**: `https://auth.wolfpack.robotics-rtuitlab.ru/admin` (или ваш хост).
+2. Войдите как **bootstrap admin** master realm: логин **`admin`**, пароль — значение **`admin-password`** из Secret **`keycloak-admin-secret`** (namespace **`wolfpackcloud-auth`**). Это **не** пользователь для API/UI приложения — только админка.
+3. В верхнем левом углу переключите **realm** с **master** на **`wolfpack-control`**.
+4. **Users** → **Create new user**: задайте **Username**; заполните **Email** и включите **Email verified** (при включённом «Login with email» иначе токены могут вести себя непредсказуемо).
+5. Вкладка **Credentials** → **Set password** → снимите **Temporary** (временный пароль блокирует нормальный вход).
+6. Вкладка **Role mapping** → **Assign role** → выберите фильтр **Filter by realm roles** и назначьте **`user`**; для оркестрации и админских эндпоинтов добавьте **`admin`**.
+7. В Postman / OAuth: клиент **`wolfpack-control-web`**, grant **Authorization Code (PKCE)** или **Password** — логин и пароль **этого** пользователя realm (не master **`admin`**).
+
+**Полный сброс Keycloak в кластере** (данные Postgres Keycloak и импорт realm пропадут): удалите namespace **`wolfpackcloud-auth`**, затем снова `kubectl apply` секреты и `kubectl apply -k deploy/k8s/keycloak/`, после старта повторите шаги создания пользователя.
 
 ## Smoke-test
 

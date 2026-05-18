@@ -34,7 +34,9 @@ export const useAuthStore = defineStore('auth', () => {
   /** Редирект на Keycloak; после входа пользователь вернётся на redirectUri. */
   function loginWithKeycloak(redirectPath = '/dashboard') {
     error.value = null
-    const path = redirectPath.startsWith('/') ? redirectPath : '/dashboard'
+    let path = redirectPath.startsWith('/') ? redirectPath : '/dashboard'
+    const i = path.indexOf('#')
+    if (i !== -1) path = path.slice(0, i)
     keycloak.login({ redirectUri: `${window.location.origin}${path}` })
   }
 
