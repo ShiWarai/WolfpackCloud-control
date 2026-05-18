@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from kubernetes import client, config
+from kubernetes.client.rest import ApiException
 from kubernetes.client import (
     V1Affinity,
     V1Container,
@@ -26,6 +27,7 @@ from kubernetes.client import (
 )
 
 from app.config import Settings
+from app.services.compute_presets import ComputePreset
 
 logger = logging.getLogger(__name__)
 
@@ -163,27 +165,73 @@ def list_pods_on_nodes(settings: Settings) -> list[dict[str, Any]]:
     return out
 
 
+def node_architecture_by_hostname(settings: Settings, hostname: str) -> str:
+    """kubernetes.io/arch для ноды по имени (любая нода кластера)."""
+    _configure_k8s()
+    v1 = client.CoreV1Api()
+    hn = (hostname or "").strip()
+    if not hn:
+        return ""
+    for n in v1.list_node().items or []:
+        if n.metadata.name == hn:
+            return str((n.metadata.labels or {}).get("kubernetes.io/arch", "") or "")
+    raise ValueError(f"узел {hostname!r} не найден")
+
+
+def _deployment_uses_managed_peer_image(settings: Settings, image: str | None) -> bool:
+    """Образ контейнера peer из настроек Control (amd64/arm64 swap при смене ноды)."""
+    i = (image or "").strip()
+    if not i:
+        return False
+    return i in {
+        settings.compute_peer_image_amd64.strip(),
+        settings.compute_peer_image_arm64.strip(),
+    }
+
+
 def patch_deployment_node_selector(
     settings: Settings,
     deployment_name: str,
     node_hostname: str | None,
 ) -> None:
-    """Задать nodeSelector kubernetes.io/hostname."""
+    """Задать nodeSelector kubernetes.io/hostname; для peer с образами Control — подобрать image под архитектуру ноды."""
     _configure_k8s()
     apps = client.AppsV1Api()
-    body: dict[str, Any]
-    if node_hostname:
-        body = {
-            "spec": {
-                "template": {
-                    "spec": {
-                        "nodeSelector": {"kubernetes.io/hostname": node_hostname},
-                    }
-                }
-            }
-        }
-    else:
-        body = {"spec": {"template": {"spec": {"nodeSelector": {}}}}}
+    if not node_hostname:
+        body: dict[str, Any] = {"spec": {"template": {"spec": {"nodeSelector": {}}}}}
+        apps.patch_namespaced_deployment(
+            deployment_name,
+            settings.k8s_namespace,
+            body,
+        )
+        return
+
+    arch = node_architecture_by_hostname(settings, node_hostname)
+
+    template_spec: dict[str, Any] = {
+        "nodeSelector": {"kubernetes.io/hostname": node_hostname},
+    }
+
+    if arch:
+        dep = apps.read_namespaced_deployment(deployment_name, settings.k8s_namespace)
+        tpl = dep.spec.template
+        if tpl and tpl.spec and tpl.spec.containers:
+            for c in tpl.spec.containers:
+                if c.name == "peer" and _deployment_uses_managed_peer_image(settings, c.image):
+                    try:
+                        new_image = arch_to_image(settings, arch)
+                    except ValueError:
+                        break
+                    template_spec["containers"] = [
+                        {
+                            "name": "peer",
+                            "image": new_image,
+                            "imagePullPolicy": "Always",
+                        }
+                    ]
+                    break
+
+    body = {"spec": {"template": {"spec": template_spec}}}
     apps.patch_namespaced_deployment(
         deployment_name,
         settings.k8s_namespace,
@@ -203,6 +251,138 @@ ZENOH_OVERRIDE = (
     '["tcp/zenoh-router.wolfpackcloud-zenoh.svc.cluster.local:7447"];'
     "timestamping/enabled={router:false,peer:false,client:false}"
 )
+
+
+def arch_to_image(settings: Settings, arch: str) -> str:
+    """Образ compute-peer по kubernetes.io/arch ноды."""
+    a = (arch or "").strip().lower()
+    if a == "amd64":
+        return settings.compute_peer_image_amd64
+    if a == "arm64":
+        return settings.compute_peer_image_arm64
+    raise ValueError(f"unsupported node architecture: {arch!r}")
+
+
+def _namespaced_deployment_exists(
+    apps: client.AppsV1Api,
+    settings: Settings,
+    name: str,
+) -> bool:
+    try:
+        apps.read_namespaced_deployment(name, settings.k8s_namespace)
+        return True
+    except ApiException as e:
+        if e.status == 404:
+            return False
+        raise
+
+
+def build_preset_peer_deployment(
+    *,
+    settings: Settings,
+    preset: ComputePreset,
+    node_hostname: str,
+    image: str,
+) -> V1Deployment:
+    """Deployment compute-peer из каталога пресетов (без logical node / owner)."""
+    deployment_name = preset.deployment_name
+    labels = {
+        "app.kubernetes.io/name": deployment_name,
+        "app.kubernetes.io/component": "wolfpackcloud-compute-instance-peer",
+    }
+    node_selector = {"kubernetes.io/hostname": node_hostname}
+
+    container = V1Container(
+        name="peer",
+        image=image,
+        image_pull_policy="Always",
+        env=[
+            V1EnvVar(name="RMW_IMPLEMENTATION", value="rmw_zenoh_cpp"),
+            V1EnvVar(name="ROS_DOMAIN_ID", value="0"),
+            V1EnvVar(name="ZENOH_CONFIG_OVERRIDE", value=ZENOH_OVERRIDE),
+        ],
+        args=[
+            f"publish_topic:={preset.publish_topic}",
+            f"subscribe_topic:={preset.subscribe_topic}",
+            f"peer_shard:={preset.peer_shard}",
+        ],
+        resources=V1ResourceRequirements(
+            requests={"cpu": "100m", "memory": "256Mi"},
+            limits={"memory": "768Mi"},
+        ),
+    )
+
+    pod_spec = V1PodSpec(
+        containers=[container],
+        node_selector=node_selector,
+    )
+
+    template = V1PodTemplateSpec(
+        metadata=V1ObjectMeta(labels=labels),
+        spec=pod_spec,
+    )
+
+    spec = V1DeploymentSpec(
+        replicas=0,
+        strategy=V1DeploymentStrategy(type="Recreate"),
+        selector=V1LabelSelector(match_labels={"app.kubernetes.io/name": deployment_name}),
+        template=template,
+    )
+
+    meta = V1ObjectMeta(
+        name=deployment_name,
+        namespace=settings.k8s_namespace,
+        labels=labels,
+    )
+
+    return V1Deployment(
+        api_version="apps/v1",
+        kind="Deployment",
+        metadata=meta,
+        spec=spec,
+    )
+
+
+def launch_preset_peer(
+    settings: Settings,
+    preset: ComputePreset,
+    node_hostname: str,
+    image: str,
+) -> None:
+    """Создать deployment при отсутствии, затем привязать ноду, образ и scale=1."""
+    _configure_k8s()
+    apps = client.AppsV1Api()
+    if not _namespaced_deployment_exists(apps, settings, preset.deployment_name):
+        dep = build_preset_peer_deployment(
+            settings=settings,
+            preset=preset,
+            node_hostname=node_hostname,
+            image=image,
+        )
+        apps.create_namespaced_deployment(settings.k8s_namespace, dep)
+
+    body: dict[str, Any] = {
+        "spec": {
+            "replicas": 1,
+            "template": {
+                "spec": {
+                    "nodeSelector": {"kubernetes.io/hostname": node_hostname},
+                    "containers": [
+                        {
+                            "name": "peer",
+                            "image": image,
+                            "imagePullPolicy": "Always",
+                        }
+                    ],
+                }
+            },
+        }
+    }
+    apps.patch_namespaced_deployment(
+        preset.deployment_name,
+        settings.k8s_namespace,
+        body,
+    )
 
 
 def build_peer_deployment(

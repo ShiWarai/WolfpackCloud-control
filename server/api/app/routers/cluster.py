@@ -5,15 +5,29 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.database import get_db
 from app.deps import get_current_user
-from app.models import User
+from app.models import LogicalNode, User, UserRole
+from app.schemas import (
+    ComputePresetLaunchRequest,
+    ComputePresetLaunchResponse,
+    ComputePresetResponse,
+)
 from app.services import k8s as k8s_svc
+from app.services.compute_orchestration import ComputeOrchestrator
+from app.services.compute_presets import get_compute_preset, list_compute_presets
 
 router = APIRouter(prefix="/api/cluster", tags=["cluster"])
 settings = get_settings()
+_orchestrator = ComputeOrchestrator()
+
+# Не останавливать инфраструктурные деплойменты из UI
+_PROTECTED_DEPLOYMENT_NAMES = frozenset({"zenoh-router"})
 
 
 async def _run_k8s(fn, *args, **kwargs):
@@ -60,3 +74,128 @@ async def cluster_orchestration(_user: User = Depends(get_current_user)) -> dict
         "orphanPods": orphan_pods,
         "deployments": deps,
     }
+
+
+@router.get("/compute-presets", response_model=list[ComputePresetResponse])
+async def cluster_compute_presets(
+    _user: User = Depends(get_current_user),
+) -> list[ComputePresetResponse]:
+    """Каталог заготовленных compute-peer (alpha/beta/gamma)."""
+    return [
+        ComputePresetResponse(
+            id=p.id,
+            deployment_name=p.deployment_name,
+            display_name=p.display_name,
+            publish_topic=p.publish_topic,
+            subscribe_topic=p.subscribe_topic,
+            peer_shard=p.peer_shard,
+        )
+        for p in list_compute_presets()
+    ]
+
+
+@router.post("/compute-presets/{preset_id}/launch", response_model=ComputePresetLaunchResponse)
+async def cluster_launch_compute_preset(
+    preset_id: str,
+    body: ComputePresetLaunchRequest,
+    _user: User = Depends(get_current_user),
+) -> ComputePresetLaunchResponse:
+    """Запуск пресета на выбранной ноде или со случайным выбором Ready worker/dev."""
+    preset = get_compute_preset(preset_id)
+    if not preset:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пресет не найден")
+
+    nodes = await _run_k8s(k8s_svc.list_worker_nodes, settings)
+    try:
+        chosen_host = _orchestrator.select_node(
+            nodes,
+            manual_hostname=(
+                None
+                if body.auto_orchestrate
+                else (body.node_hostname.strip() if body.node_hostname else None)
+            ),
+            auto_orchestrate=body.auto_orchestrate,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+    target = next((n for n in nodes if n["name"] == chosen_host), None)
+    if not target:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Нода не в пуле оркестрации",
+        )
+    if not target.get("ready"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Нода не Ready",
+        )
+
+    arch = str(target.get("architecture") or "")
+    try:
+        image = k8s_svc.arch_to_image(settings, arch)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+    try:
+        await _run_k8s(
+            k8s_svc.launch_preset_peer,
+            settings,
+            preset,
+            chosen_host,
+            image,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"kubernetes: {e}") from e
+
+    return ComputePresetLaunchResponse(
+        ok=True,
+        preset_id=preset.id,
+        deployment_name=preset.deployment_name,
+        node_hostname=chosen_host,
+        architecture=arch,
+        image=image,
+    )
+
+
+async def _user_may_stop_deployment(
+    db: AsyncSession,
+    user: User,
+    deployment_name: str,
+) -> bool:
+    if deployment_name in _PROTECTED_DEPLOYMENT_NAMES:
+        return False
+    preset_names = {p.deployment_name for p in list_compute_presets()}
+    if deployment_name in preset_names:
+        return True
+    if user.role == UserRole.ADMIN:
+        return True
+    r = await db.execute(
+        select(LogicalNode).where(LogicalNode.k8s_deployment_name == deployment_name),
+    )
+    ln = r.scalar_one_or_none()
+    return ln is not None and ln.owner_id == user.id
+
+
+@router.post("/deployments/{deployment_name}/stop", summary="Replicas=0 для Deployment в zenoh")
+async def cluster_stop_deployment(
+    deployment_name: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, object]:
+    """Остановка пода (scale 0). Пресеты — любой пользователь; иначе admin или владелец workload."""
+    if deployment_name in _PROTECTED_DEPLOYMENT_NAMES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Этот деплоймент нельзя останавливать из интерфейса",
+        )
+    if not await _user_may_stop_deployment(db, user, deployment_name):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Нет прав на остановку этого деплоймента",
+        )
+    try:
+        await _run_k8s(k8s_svc.scale_deployment, settings, deployment_name, 0)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"kubernetes: {e}") from e
+    return {"ok": True, "deployment": deployment_name, "replicas": 0}

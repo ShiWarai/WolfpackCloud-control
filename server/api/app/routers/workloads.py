@@ -135,12 +135,15 @@ async def migrate_workload(
     user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
     ln = await _owned_logical_node(db, user, deployment_name)
-    await _run_k8s(
-        k8s_svc.patch_deployment_node_selector,
-        settings,
-        deployment_name,
-        body.node_hostname,
-    )
+    try:
+        await _run_k8s(
+            k8s_svc.patch_deployment_node_selector,
+            settings,
+            deployment_name,
+            body.node_hostname,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     ln.desired_node_hostname = body.node_hostname
     await db.commit()
     return {"ok": True, "deployment": deployment_name, "node_hostname": body.node_hostname}
@@ -168,12 +171,15 @@ async def migrate_any_deployment(
     user: User = Depends(get_current_admin),
 ) -> dict[str, Any]:
     """Миграция любого Deployment в namespace (только admin)."""
-    await _run_k8s(
-        k8s_svc.patch_deployment_node_selector,
-        settings,
-        deployment_name,
-        body.node_hostname,
-    )
+    try:
+        await _run_k8s(
+            k8s_svc.patch_deployment_node_selector,
+            settings,
+            deployment_name,
+            body.node_hostname,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     return {"ok": True, "deployment": deployment_name, "node_hostname": body.node_hostname}
 
 

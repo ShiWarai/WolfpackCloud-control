@@ -4,6 +4,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { clusterApi } from '@/api/cluster'
 import type {
   ClusterPod,
+  ComputePreset,
   OrchestrationResponse,
   WorkerNode,
 } from '@/api/cluster'
@@ -45,6 +46,14 @@ const orphanPods = ref<ClusterPod[]>([])
 const deployments = ref<OrchestrationResponse['deployments']>([])
 const dragged = ref<{ deploymentName: string; podName: string } | null>(null)
 
+const showLaunchModal = ref(false)
+const launchInFlight = ref(false)
+const autoOrchestrate = ref(false)
+const computePresets = ref<ComputePreset[]>([])
+const selectedPresetId = ref('')
+const selectedNodeHostname = ref('')
+const stopDeploymentInFlight = ref<string | null>(null)
+
 /** Worker и dev в одном списке; порядок: worker → dev → прочие по имени. */
 const ROLE_SORT_ORDER: Record<string, number> = { worker: 0, dev: 1 }
 
@@ -61,7 +70,11 @@ const sortedPoolNodes = computed(() =>
 
 const showSkeleton = computed(() => initialLoading.value && !hasLoadedOnce.value)
 const interactionLocked = computed(
-  () => migrateInFlight.value || refreshing.value,
+  () =>
+    migrateInFlight.value ||
+    refreshing.value ||
+    launchInFlight.value ||
+    stopDeploymentInFlight.value !== null,
 )
 
 const migrateBannerVisible = computed(
@@ -228,6 +241,72 @@ async function onDropNode(nodeName: string, ev: DragEvent) {
   }
 }
 
+async function openLaunchModal() {
+  showLaunchModal.value = true
+  error.value = null
+  try {
+    computePresets.value = await clusterApi.getComputePresets()
+    if (!selectedPresetId.value && computePresets.value.length) {
+      selectedPresetId.value = computePresets.value[0].id
+    }
+    if (!selectedNodeHostname.value && sortedPoolNodes.value.length) {
+      const firstReady = sortedPoolNodes.value.find((n) => n.ready)
+      selectedNodeHostname.value = (firstReady || sortedPoolNodes.value[0])?.name ?? ''
+    }
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { detail?: string } } }
+    error.value = err.response?.data?.detail || 'Не удалось загрузить пресеты'
+  }
+}
+
+function closeLaunchModal() {
+  if (launchInFlight.value) return
+  showLaunchModal.value = false
+}
+
+async function confirmLaunch() {
+  if (!selectedPresetId.value) {
+    error.value = 'Выберите тип пода'
+    return
+  }
+  if (!autoOrchestrate.value && !selectedNodeHostname.value) {
+    error.value = 'Выберите ноду или включите автоматическую оркестрацию'
+    return
+  }
+  launchInFlight.value = true
+  error.value = null
+  try {
+    const r = await clusterApi.launchComputePreset(selectedPresetId.value, {
+      node_hostname: autoOrchestrate.value ? null : selectedNodeHostname.value,
+      auto_orchestrate: autoOrchestrate.value,
+    })
+    flashSuccess(`Запущено: «${r.deployment_name}» на ${r.node_hostname} (${r.architecture})`)
+    showLaunchModal.value = false
+    await load({ quiet: true })
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { detail?: string } } }
+    error.value = err.response?.data?.detail || 'Не удалось запустить пресет'
+  } finally {
+    launchInFlight.value = false
+  }
+}
+
+async function onStopDeployment(deploymentName: string | undefined) {
+  if (!deploymentName || interactionLocked.value) return
+  stopDeploymentInFlight.value = deploymentName
+  error.value = null
+  try {
+    await clusterApi.stopDeployment(deploymentName)
+    flashSuccess(`Остановлен деплоймент «${deploymentName}»`)
+    await load({ quiet: true })
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { detail?: string }; status?: number } }
+    error.value = err.response?.data?.detail || 'Не удалось остановить деплоймент'
+  } finally {
+    stopDeploymentInFlight.value = null
+  }
+}
+
 onMounted(async () => {
   await authStore.fetchUser()
   await load()
@@ -244,14 +323,24 @@ onUnmounted(() => {
   <DefaultLayout>
     <div class="term-page-title-row">
       <h1 class="term-page-title">Ресурсы кластера</h1>
-      <button
-        type="button"
-        class="term-btn"
-        :disabled="interactionLocked"
-        @click="load()"
-      >
-        {{ refreshing ? 'Обновление…' : 'Обновить' }}
-      </button>
+      <div class="orchestration-title-actions">
+        <button
+          type="button"
+          class="term-btn"
+          :disabled="interactionLocked"
+          @click="openLaunchModal()"
+        >
+          Запустить
+        </button>
+        <button
+          type="button"
+          class="term-btn"
+          :disabled="interactionLocked"
+          @click="load()"
+        >
+          {{ refreshing ? 'Обновление…' : 'Обновить' }}
+        </button>
+      </div>
     </div>
 
     <p class="term-text-dim term-mb-1">Перетащите карточку пода на ноду пула.</p>
@@ -270,16 +359,85 @@ onUnmounted(() => {
       </div>
       <p class="term-text-dim term-fs-2xs term-mt-1" style="margin: 0;">
         <template v-if="migrateInFlight">Отправка запроса…</template>
-        <template v-else>
-          Ожидание готовности деплоймента на целевой ноде (список обновляется каждые {{ POLL_MS / 1000 }} с без моргания).
-        </template>
+        <template v-else>Ожидание готовности деплоймента на целевой ноде.</template>
       </p>
     </div>
 
     <div v-if="showSkeleton" class="term-card">Загрузка...</div>
 
     <div
-      v-else
+      v-if="showLaunchModal"
+      class="term-modal-overlay"
+      @click.self="closeLaunchModal()"
+    >
+      <div class="term-modal">
+        <h3 style="font-size: 1rem; margin: 0 0 0.75rem 0;">Запуск пода</h3>
+        <p class="term-text-dim term-fs-2xs term-mb-1" style="margin-top: 0;">
+          Образ контейнера выбирается на сервере по архитектуре ноды (amd64 / arm64).
+        </p>
+        <label class="term-fs-2xs term-text-dim" style="display: block; margin-bottom: 0.25rem;">Тип пода</label>
+        <select
+          v-model="selectedPresetId"
+          class="term-btn term-mb-1"
+          style="width: 100%; box-sizing: border-box; font-size: var(--fs-2xs);"
+        >
+          <option v-if="!computePresets.length" value="">Нет пресетов — проверьте API</option>
+          <option
+            v-for="p in computePresets"
+            :key="p.id"
+            :value="p.id"
+          >
+            {{ p.display_name }}
+          </option>
+        </select>
+        <label
+          class="term-fs-2xs"
+          style="display: flex; align-items: center; gap: 0.35rem; margin-bottom: 0.75rem; cursor: pointer;"
+        >
+          <input v-model="autoOrchestrate" type="checkbox" />
+          <span>Автоматическая оркестрация вычислений</span>
+        </label>
+        <label class="term-fs-2xs term-text-dim" style="display: block; margin-bottom: 0.25rem;">Нода</label>
+        <select
+          v-model="selectedNodeHostname"
+          class="term-btn term-mb-1"
+          style="width: 100%; box-sizing: border-box; font-size: var(--fs-2xs);"
+          :disabled="autoOrchestrate"
+        >
+          <option v-if="!sortedPoolNodes.length" value="">Нет нод в пуле</option>
+          <option
+            v-for="n in sortedPoolNodes"
+            :key="n.name"
+            :value="n.name"
+            :disabled="!n.ready"
+          >
+            {{ n.name }} — {{ n.labels['wolfpack.io/role'] || '—' }} · {{ n.architecture }} ·
+            {{ n.ready ? 'Ready' : 'NotReady' }}
+          </option>
+        </select>
+        <div style="display: flex; gap: 0.5rem;">
+          <button type="button" class="term-btn" style="flex: 1;" @click="closeLaunchModal()">
+            Отмена
+          </button>
+          <button
+            type="button"
+            class="term-btn"
+            style="flex: 1;"
+            :disabled="
+              launchInFlight ||
+                !selectedPresetId ||
+                (!autoOrchestrate && !selectedNodeHostname)
+            "
+            @click="confirmLaunch()"
+          >
+            {{ launchInFlight ? 'Запуск…' : 'Запустить' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="!showSkeleton"
       class="term-card orchestration-card"
       :class="{ 'orchestration-card--refresh': refreshing }"
     >
@@ -293,15 +451,28 @@ onUnmounted(() => {
           <div
             v-for="pod in orphanPods"
             :key="pod.name"
-            :draggable="!interactionLocked"
-            class="term-btn"
-            style="cursor: grab; font-size: var(--fs-2xs); padding: 0.25rem 0.5rem;"
-            :title="`${pod.deploymentName || pod.name} @ ${pod.nodeName || '?'}`"
-            @dragstart="onDragStart(pod.deploymentName, pod.name, $event)"
-            @dragend="onDragEnd"
+            class="orchestration-pod-chip term-btn"
           >
-            {{ pod.deploymentName || pod.name }}
-            <span class="term-text-dim"> @{{ pod.nodeName }}</span>
+            <span
+              :draggable="!interactionLocked && !!pod.deploymentName"
+              class="orchestration-pod-chip__drag"
+              :title="`${pod.deploymentName || pod.name} @ ${pod.nodeName || '?'}`"
+              @dragstart="onDragStart(pod.deploymentName, pod.name, $event)"
+              @dragend="onDragEnd"
+            >
+              {{ pod.deploymentName || pod.name }}
+              <span class="term-text-dim"> @{{ pod.nodeName }}</span>
+            </span>
+            <button
+              v-if="pod.deploymentName"
+              type="button"
+              class="orchestration-pod-chip__close"
+              :disabled="interactionLocked"
+              title="Остановить под (deployment → 0 реплик)"
+              @click.stop.prevent="onStopDeployment(pod.deploymentName)"
+            >
+              ×
+            </button>
           </div>
         </div>
       </div>
@@ -327,14 +498,27 @@ onUnmounted(() => {
           <div
             v-for="pod in (podsByNode[node.name] || [])"
             :key="pod.name"
-            :draggable="!interactionLocked"
-            class="term-btn"
-            style="cursor: grab; font-size: var(--fs-2xs); padding: 0.25rem 0.5rem;"
+            class="orchestration-pod-chip term-btn"
             :title="pod.deploymentName || pod.name"
-            @dragstart="onDragStart(pod.deploymentName, pod.name, $event)"
-            @dragend="onDragEnd"
           >
-            {{ pod.deploymentName || pod.name }}
+            <span
+              :draggable="!interactionLocked && !!pod.deploymentName"
+              class="orchestration-pod-chip__drag"
+              @dragstart="onDragStart(pod.deploymentName, pod.name, $event)"
+              @dragend="onDragEnd"
+            >
+              {{ pod.deploymentName || pod.name }}
+            </span>
+            <button
+              v-if="pod.deploymentName"
+              type="button"
+              class="orchestration-pod-chip__close"
+              :disabled="interactionLocked"
+              title="Остановить под (deployment → 0 реплик)"
+              @click.stop.prevent="onStopDeployment(pod.deploymentName)"
+            >
+              ×
+            </button>
           </div>
           <span v-if="!(podsByNode[node.name]?.length)" class="term-text-dim term-fs-2xs">нет подов</span>
         </div>
@@ -354,5 +538,69 @@ onUnmounted(() => {
 .orchestration-node-drop--active {
   outline: 2px solid rgba(251, 146, 60, 0.65);
   outline-offset: 2px;
+}
+
+.orchestration-title-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.term-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.term-modal {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  padding: 1.5rem;
+  max-width: 26rem;
+  width: calc(100% - 2rem);
+}
+
+.orchestration-pod-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  font-size: var(--fs-2xs);
+  padding: 0.2rem 0.35rem 0.2rem 0.45rem;
+}
+
+.orchestration-pod-chip__drag {
+  cursor: grab;
+  flex: 1;
+  min-width: 0;
+}
+
+.orchestration-pod-chip__close {
+  flex-shrink: 0;
+  width: 1.35rem;
+  height: 1.35rem;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted, #888);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.orchestration-pod-chip__close:hover:not(:disabled) {
+  color: var(--accent, #fb923c);
+  background: rgba(251, 146, 60, 0.12);
+}
+
+.orchestration-pod-chip__close:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 </style>

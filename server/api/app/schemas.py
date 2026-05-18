@@ -2,9 +2,11 @@
 Pydantic схемы для валидации запросов и ответов API.
 """
 
+from __future__ import annotations
+
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 from app.models import Architecture, PairCodeStatus, RobotStatus, UserRole, WorkloadStatus
 
@@ -292,6 +294,51 @@ class WorkloadResponse(BaseModel):
     status: WorkloadStatus
     created_at: datetime
     updated_at: datetime
+
+
+# =============================================================================
+# Заготовленные compute-peer (пресеты)
+# =============================================================================
+
+
+class ComputePresetResponse(BaseModel):
+    """Пресет для UI запуска peer."""
+
+    id: str
+    deployment_name: str
+    display_name: str
+    publish_topic: str
+    subscribe_topic: str
+    peer_shard: int
+
+
+class ComputePresetLaunchRequest(BaseModel):
+    """Целевая нода или автоматический выбор из пула worker/dev."""
+
+    node_hostname: str | None = Field(None, max_length=253)
+    auto_orchestrate: bool = Field(
+        default=False,
+        description="Сервер выбирает ноду (пока случайно среди Ready worker/dev)",
+    )
+
+    @model_validator(mode="after")
+    def node_or_auto(self) -> ComputePresetLaunchRequest:
+        if self.auto_orchestrate:
+            return self
+        if not self.node_hostname or not str(self.node_hostname).strip():
+            raise ValueError("Укажите ноду или включите автоматическую оркестрацию")
+        return self
+
+
+class ComputePresetLaunchResponse(BaseModel):
+    """Результат запуска пресета на ноде."""
+
+    ok: bool = True
+    preset_id: str
+    deployment_name: str
+    node_hostname: str
+    architecture: str
+    image: str
 
 
 # =============================================================================
