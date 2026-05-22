@@ -30,6 +30,16 @@ router = APIRouter(prefix="/api/pair", tags=["pairing"])
 settings = get_settings()
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _as_utc_aware(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def generate_influxdb_token() -> str:
     """Генерирует токен для InfluxDB."""
     return secrets.token_urlsafe(32)
@@ -81,7 +91,7 @@ async def register_robot(
     await db.flush()
 
     # Создаём код привязки
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.pair_code_expiration_minutes)
+    expires_at = _utc_now() + timedelta(minutes=settings.pair_code_expiration_minutes)
     pair_code = PairCode(
         code=request.pair_code,
         robot_id=robot.id,
@@ -128,7 +138,7 @@ async def get_pair_code_info(
         )
 
     # Проверяем истечение срока
-    if pair_code.status == PairCodeStatus.PENDING and pair_code.expires_at < datetime.now(timezone.utc):
+    if pair_code.status == PairCodeStatus.PENDING and _as_utc_aware(pair_code.expires_at) < _utc_now():
         pair_code.status = PairCodeStatus.EXPIRED
         await db.commit()
 
@@ -170,7 +180,7 @@ async def get_pair_status(
         )
 
     # Проверяем истечение срока
-    if pair_code.status == PairCodeStatus.PENDING and pair_code.expires_at < datetime.now(timezone.utc):
+    if pair_code.status == PairCodeStatus.PENDING and _as_utc_aware(pair_code.expires_at) < _utc_now():
         pair_code.status = PairCodeStatus.EXPIRED
         await db.commit()
 
@@ -246,7 +256,7 @@ async def confirm_pairing(
             detail="Код уже был подтверждён",
         )
 
-    if pair_code.status == PairCodeStatus.EXPIRED or pair_code.expires_at < datetime.now(timezone.utc):
+    if pair_code.status == PairCodeStatus.EXPIRED or _as_utc_aware(pair_code.expires_at) < _utc_now():
         pair_code.status = PairCodeStatus.EXPIRED
         await db.commit()
         raise HTTPException(

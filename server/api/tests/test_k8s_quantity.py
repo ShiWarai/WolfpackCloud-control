@@ -7,6 +7,8 @@ def test_parse_memory_mebibytes_suffixes() -> None:
     assert parse_k8s_memory_bytes("256Mi") == 256 * 1024 * 1024
     assert parse_k8s_memory_bytes("1Ki") == 1024
     assert parse_k8s_memory_bytes("0") == 0
+    assert parse_k8s_memory_bytes(None) == 0
+    assert parse_k8s_memory_bytes("   ") == 0
 
 
 def test_parse_cpu_millicores() -> None:
