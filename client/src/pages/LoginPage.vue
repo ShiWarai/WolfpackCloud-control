@@ -24,7 +24,7 @@ function handleLogin() {
       <div class="term-auth-header">
         <img src="/icon.svg" alt="" style="height: 3rem; margin-bottom: 1rem;">
         <h1>WolfpackCloud</h1>
-        <p>Control · Вход через Keycloak</p>
+        <p>Вход через Keycloak</p>
       </div>
 
       <div class="term-card" style="padding: 1.5rem;">
@@ -53,7 +53,7 @@ function handleLogin() {
     </div>
 
     <footer class="term-footer" style="position: fixed; bottom: 0; left: 0; right: 0;">
-      WolfpackCloud — control
+      WolfpackCloud
     </footer>
   </div>
 </template>

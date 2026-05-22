@@ -45,6 +45,48 @@ export interface ComputePresetLaunchBody {
   auto_orchestrate: boolean
 }
 
+export interface OrchestrationStep {
+  id: string
+  name: string
+  formula: string
+}
+
+export interface OrchestrationNodeTrace {
+  name: string
+  ready: boolean
+  architecture: string
+  f1_passed: boolean
+  f1_reason?: string | null
+  q_ram?: number | null
+  q_cpu?: number | null
+  barrier_passed?: boolean | null
+  f?: number | null
+  latency_ms?: number | null
+  selected: boolean
+}
+
+export interface OrchestrationRankingEntry {
+  node_hostname: string
+  f: number
+  latency_ms: number
+}
+
+export interface OrchestrationTask {
+  memory_request_mib: number
+  cpu_request_millicores: number
+  weight_ram: number
+  weight_cpu: number
+}
+
+export interface OrchestrationTrace {
+  steps: OrchestrationStep[]
+  nodes: OrchestrationNodeTrace[]
+  chosen?: string | null
+  ranking: OrchestrationRankingEntry[]
+  task?: OrchestrationTask | null
+  error?: string | null
+}
+
 export interface ComputePresetLaunchResult {
   ok: boolean
   preset_id: string
@@ -52,6 +94,7 @@ export interface ComputePresetLaunchResult {
   node_hostname: string
   architecture: string
   image: string
+  orchestration_trace?: OrchestrationTrace | null
 }
 
 export const clusterApi = {

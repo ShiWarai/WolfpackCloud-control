@@ -10,7 +10,7 @@ const keycloakUrl = import.meta.env.VITE_KEYCLOAK_URL || ''
   <div class="term-card">
     <h2>Внешние сервисы</h2>
     <p class="term-text-dim term-fs-2xs">
-      В WolfpackCloud Control мониторинг Influx/Grafana не подключён. Авторизация — Keycloak.
+      В WolfpackCloud мониторинг Influx/Grafana не подключён. Авторизация — Keycloak.
     </p>
     <div v-if="keycloakUrl" class="term-mt-1">
       <a

@@ -13,11 +13,12 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from app import __version__
 from app.config import get_settings
-from app.database import init_db
+from app.database import engine, init_db
 from app.routers import (
     account_router,
     auth_router,
     cluster_router,
+    events_router,
     internal_router,
     logs_router,
     metrics_router,
@@ -28,7 +29,9 @@ from app.routers import (
 )
 from app.openapi_keycloak import patch_openapi_for_keycloak_swagger
 from app.schemas import ErrorResponse, HealthResponse
+from app.services.influx import ping as influx_ping
 from app.tasks import start_scheduler, stop_scheduler
+from sqlalchemy import text
 
 settings = get_settings()
 
@@ -110,6 +113,7 @@ app.include_router(auth_router)
 app.include_router(account_router)
 app.include_router(networks_router)
 app.include_router(cluster_router)
+app.include_router(events_router)
 app.include_router(workloads_router)
 app.include_router(logs_router)
 app.include_router(metrics_router)
@@ -137,11 +141,24 @@ async def redirect_legacy_redoc() -> RedirectResponse:
 
 @app.get("/health", response_model=HealthResponse, tags=["system"])
 async def health_check() -> dict[str, Any]:
+    db_status = "connected"
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+    except Exception:
+        db_status = "error"
+    influx_status = "disabled"
+    if settings.influxdb_configured:
+        try:
+            influx_status = "connected" if await influx_ping(settings) else "error"
+        except Exception:
+            influx_status = "error"
     return {
         "status": "ok",
         "version": __version__,
-        "database": "connected",
+        "database": db_status,
         "metrics_backend": "heartbeat_only",
+        "influxdb": influx_status,
     }
 
 

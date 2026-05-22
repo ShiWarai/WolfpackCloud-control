@@ -57,16 +57,35 @@ class Settings(BaseSettings):
     compute_peer_image_arm64: str = (
         "10.43.50.10:5000/wolfpackcloud-compute-instance-peer:humble-arm64"
     )
+    control_robot_agent_image_amd64: str = (
+        "10.43.50.10:5000/wolfpack-control-robot-agent:latest-amd64"
+    )
+    control_robot_agent_image_arm64: str = (
+        "10.43.50.10:5000/wolfpack-control-robot-agent:latest-arm64"
+    )
 
     #: Веса скоринга оркестрации: w_ram * q_ram + w_cpu * q_cpu (формула 3)
     orchestration_weight_ram: float = 1.0
     orchestration_weight_cpu: float = 1.0
     #: Метка ноды для разрыва ничьих f (меньше ms — лучше). Пусто — только имя ноды.
     k8s_orchestration_latency_label: str = ""
+    #: Нода с этой парой label/value исключается из авто-оркестрации (ручной запуск доступен).
+    k8s_auto_orchestration_block_label: str = "wolfpack.io/auto-orchestration"
+    k8s_auto_orchestration_block_value: str = "blocked"
 
     rosout_ingest_token: str = "change-me-ingest-token"
 
+    influxdb_url: str = ""
+    influxdb_token: str = ""
+    influxdb_org: str = "wolfpackcloud_influxdb"
+    influxdb_bucket_ros_logs: str = "ros_logs"
+    influxdb_bucket_deployment_events: str = "deployment_events"
+
     keycloak_account_base_url: str | None = None
+
+    @property
+    def influxdb_configured(self) -> bool:
+        return bool((self.influxdb_url or "").strip() and (self.influxdb_token or "").strip())
 
     @property
     def control_admin_identities_lower(self) -> frozenset[str]:

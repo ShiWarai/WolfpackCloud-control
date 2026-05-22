@@ -183,16 +183,3 @@ class LogicalNode(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
-
-
-class RosLogEntry(Base):
-    """Кэш строк rosout для UI."""
-
-    __tablename__ = "ros_log_entries"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    network_id: Mapped[int | None] = mapped_column(ForeignKey("networks.id", ondelete="SET NULL"))
-    ros_node_name: Mapped[str | None] = mapped_column(String(512))
-    level: Mapped[str | None] = mapped_column(String(32))
-    message: Mapped[str] = mapped_column(Text, nullable=False)
-    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

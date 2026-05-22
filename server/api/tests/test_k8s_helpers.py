@@ -4,8 +4,14 @@ from __future__ import annotations
 
 import pytest
 
+from kubernetes import client
+
 from app.config import Settings
-from app.services.k8s import node_matches_orchestration_pool, sanitize_k8s_name
+from app.services.k8s import (
+    normalize_incluster_bearer_auth,
+    node_matches_orchestration_pool,
+    sanitize_k8s_name,
+)
 
 
 @pytest.fixture
@@ -50,3 +56,20 @@ def test_node_matches_pool_control_plane_hidden(pool_settings: Settings):
 def test_master_role_excluded(pool_settings: Settings):
     labels = {"wolfpack.io/role": "master"}
     assert node_matches_orchestration_pool(labels, pool_settings) is False
+
+
+def test_normalize_incluster_bearer_auth_lowercase_prefix():
+    cfg = client.Configuration()
+    cfg.api_key = {"authorization": "bearer test-token"}
+    normalize_incluster_bearer_auth(cfg)
+    assert cfg.api_key == {"BearerToken": "test-token"}
+    assert cfg.api_key_prefix == {"BearerToken": "Bearer"}
+
+
+def test_normalize_incluster_bearer_auth_already_prefixed():
+    cfg = client.Configuration()
+    cfg.api_key = {"BearerToken": "plain-token"}
+    cfg.api_key_prefix = {"BearerToken": "Bearer"}
+    normalize_incluster_bearer_auth(cfg)
+    assert cfg.api_key == {"BearerToken": "plain-token"}
+    assert cfg.api_key_prefix == {"BearerToken": "Bearer"}

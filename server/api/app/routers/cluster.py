@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from kubernetes.client.rest import ApiException
+
+try:
+    from kubernetes.client.exceptions import UnauthorizedException
+except ImportError:
+    UnauthorizedException = ApiException  # type: ignore[misc,assignment]
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -16,21 +23,82 @@ from app.schemas import (
     ComputePresetLaunchRequest,
     ComputePresetLaunchResponse,
     ComputePresetResponse,
+    OrchestrationNodeTraceResponse,
+    OrchestrationRankingEntryResponse,
+    OrchestrationStepResponse,
+    OrchestrationTaskResponse,
+    OrchestrationTraceResponse,
 )
+from app.services import deployment_events_store
 from app.services import k8s as k8s_svc
-from app.services.compute_orchestration import ComputeOrchestrator
+from app.services.compute_orchestration import ComputeOrchestrator, OrchestrationTrace
 from app.services.compute_presets import get_compute_preset, list_compute_presets
 
 router = APIRouter(prefix="/api/cluster", tags=["cluster"])
 settings = get_settings()
 _orchestrator = ComputeOrchestrator()
+logger = logging.getLogger(__name__)
 
 # Не останавливать инфраструктурные деплойменты из UI
 _PROTECTED_DEPLOYMENT_NAMES = frozenset({"zenoh-router"})
 
 
 async def _run_k8s(fn, *args, **kwargs):
-    return await asyncio.to_thread(fn, *args, **kwargs)
+    try:
+        return await asyncio.to_thread(fn, *args, **kwargs)
+    except (ApiException, UnauthorizedException) as e:
+        reason = getattr(e, "reason", None) or str(e)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"kubernetes: {reason}",
+        ) from e
+
+
+async def _record_deployment_event(**kwargs: Any) -> None:
+    try:
+        await deployment_events_store.record_deployment_event(settings, **kwargs)
+    except Exception as exc:
+        logger.warning("Failed to record deployment event: %s", exc)
+
+
+def _trace_to_response(trace: OrchestrationTrace) -> OrchestrationTraceResponse:
+    task = None
+    if trace.task is not None:
+        task = OrchestrationTaskResponse(
+            memory_request_mib=trace.task.memory_request_mib,
+            cpu_request_millicores=trace.task.cpu_request_millicores,
+            weight_ram=trace.task.weight_ram,
+            weight_cpu=trace.task.weight_cpu,
+        )
+    return OrchestrationTraceResponse(
+        steps=[
+            OrchestrationStepResponse(id=s.id, name=s.name, formula=s.formula)
+            for s in trace.steps
+        ],
+        nodes=[
+            OrchestrationNodeTraceResponse(
+                name=n.name,
+                ready=n.ready,
+                architecture=n.architecture,
+                f1_passed=n.f1_passed,
+                f1_reason=n.f1_reason,
+                q_ram=n.q_ram,
+                q_cpu=n.q_cpu,
+                barrier_passed=n.barrier_passed,
+                f=n.f,
+                latency_ms=n.latency_ms,
+                selected=n.selected,
+            )
+            for n in trace.nodes
+        ],
+        chosen=trace.chosen,
+        ranking=[
+            OrchestrationRankingEntryResponse(node_hostname=name, f=f_val, latency_ms=lat)
+            for name, f_val, lat in trace.ranking
+        ],
+        task=task,
+        error=trace.error,
+    )
 
 
 @router.get("/nodes", summary="Ноды пула ресурсов (worker, dev, …)")
@@ -99,7 +167,7 @@ async def cluster_compute_presets(
 async def cluster_launch_compute_preset(
     preset_id: str,
     body: ComputePresetLaunchRequest,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ) -> ComputePresetLaunchResponse:
     """Запуск пресета на выбранной ноде или авторазмещение (гибридная оркестрация)."""
     preset = get_compute_preset(preset_id)
@@ -107,20 +175,25 @@ async def cluster_launch_compute_preset(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пресет не найден")
 
     nodes = await _run_k8s(k8s_svc.list_worker_nodes, settings)
+    orchestration_trace: OrchestrationTraceResponse | None = None
     if body.auto_orchestrate:
         nodes = await _run_k8s(k8s_svc.enrich_worker_nodes_with_scheduling_stats, settings, nodes)
     try:
-        chosen_host = _orchestrator.select_node(
-            nodes,
-            settings=settings if body.auto_orchestrate else None,
-            preset=preset if body.auto_orchestrate else None,
-            manual_hostname=(
-                None
-                if body.auto_orchestrate
-                else (body.node_hostname.strip() if body.node_hostname else None)
-            ),
-            auto_orchestrate=body.auto_orchestrate,
-        )
+        if body.auto_orchestrate:
+            chosen_host, trace = _orchestrator.select_node_with_trace(
+                nodes,
+                settings=settings,
+                preset=preset,
+            )
+            orchestration_trace = _trace_to_response(trace)
+        else:
+            chosen_host = _orchestrator.select_node(
+                nodes,
+                manual_hostname=(
+                    body.node_hostname.strip() if body.node_hostname else None
+                ),
+                auto_orchestrate=False,
+            )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
@@ -138,13 +211,18 @@ async def cluster_launch_compute_preset(
 
     arch = str(target.get("architecture") or "")
     try:
-        image = k8s_svc.arch_to_image(settings, arch)
+        image = k8s_svc.arch_to_image_for_preset(settings, arch, preset)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
+    launch_fn = (
+        k8s_svc.launch_preset_robot_agent
+        if preset.kind == "robot_agent"
+        else k8s_svc.launch_preset_peer
+    )
     try:
         await _run_k8s(
-            k8s_svc.launch_preset_peer,
+            launch_fn,
             settings,
             preset,
             chosen_host,
@@ -153,6 +231,15 @@ async def cluster_launch_compute_preset(
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"kubernetes: {e}") from e
 
+    await _record_deployment_event(
+        deployment=preset.deployment_name,
+        status="success",
+        from_host="",
+        to_host=chosen_host,
+        user_id=user.id,
+        preset_id=preset.id,
+    )
+
     return ComputePresetLaunchResponse(
         ok=True,
         preset_id=preset.id,
@@ -160,6 +247,7 @@ async def cluster_launch_compute_preset(
         node_hostname=chosen_host,
         architecture=arch,
         image=image,
+        orchestration_trace=orchestration_trace,
     )
 
 
@@ -191,7 +279,19 @@ async def cluster_stop_deployment(
             detail="Нет прав на остановку этого деплоймента",
         )
     try:
+        from_host = await _run_k8s(
+            k8s_svc.get_deployment_node_hostname,
+            settings,
+            deployment_name,
+        )
         await _run_k8s(k8s_svc.scale_deployment, settings, deployment_name, 0)
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"kubernetes: {e}") from e
+    await _record_deployment_event(
+        deployment=deployment_name,
+        status="stopped",
+        from_host=from_host,
+        to_host=None,
+        user_id=user.id,
+    )
     return {"ok": True, "deployment": deployment_name, "replicas": 0}

@@ -16,11 +16,12 @@ _DEFAULT_CPU_MILLI = 100
 
 @dataclass(frozen=True, slots=True)
 class ComputePreset:
-    """Описание одного заготовленного peer-deployment."""
+    """Описание одного заготовленного deployment для оркестрации."""
 
     id: str
     deployment_name: str
     display_name: str
+    kind: str
     publish_topic: str
     subscribe_topic: str
     peer_shard: int
@@ -28,6 +29,7 @@ class ComputePreset:
     memory_request_mib: int
     #: Запрос CPU задачи T (millicores), как в Deployment requests.cpu (100m → 100)
     cpu_request_millicores: int
+    robot_name: str = "demo-robot-k8s"
 
 
 def _load_raw() -> dict:
@@ -40,18 +42,21 @@ def list_compute_presets() -> list[ComputePreset]:
     items = data.get("presets") or []
     out: list[ComputePreset] = []
     for row in items:
+        kind = str(row.get("kind") or "peer").strip().lower()
         out.append(
             ComputePreset(
                 id=str(row["id"]),
                 deployment_name=str(row["deployment_name"]),
                 display_name=str(row.get("display_name") or row["id"]),
-                publish_topic=str(row["publish_topic"]),
-                subscribe_topic=str(row["subscribe_topic"]),
-                peer_shard=int(row["peer_shard"]),
+                kind=kind,
+                publish_topic=str(row.get("publish_topic") or ""),
+                subscribe_topic=str(row.get("subscribe_topic") or ""),
+                peer_shard=int(row.get("peer_shard") or 0),
                 memory_request_mib=int(row.get("memory_request_mib", _DEFAULT_MEMORY_MIB)),
                 cpu_request_millicores=int(
                     row.get("cpu_request_millicores", _DEFAULT_CPU_MILLI),
                 ),
+                robot_name=str(row.get("robot_name") or "demo-robot-k8s"),
             )
         )
     return out

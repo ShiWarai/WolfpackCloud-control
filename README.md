@@ -53,6 +53,8 @@ S="${TAG}-${ARCH}"
   "${REG}/wolfpack-control-client:${S}" "${build_client_opts[@]}"
 ./scripts/build-with-buildkit.sh "$ARCH" WolfpackCloud-control/rosout-bridge \
   "${REG}/wolfpack-rosout-bridge:${S}"
+./scripts/build-with-buildkit.sh "$ARCH" WolfpackCloud-control/robot-agent \
+  "${REG}/wolfpack-control-robot-agent:${S}"
 ```
 
 Для **amd64** поменяйте `ARCH=amd64`, образ `:latest-amd64` и в YAML уберите/измените affinity на `arm64` и тег образа.
@@ -66,7 +68,9 @@ S="${TAG}-${ARCH}"
 3. Если realm **уже был импортирован раньше**, стратегия импорта `IGNORE_EXISTING` не обновит клиента: в **Keycloak Admin** → realm **wolfpack-control** → **Clients** → **wolfpack-control-web** проверьте **Web origins**: должны быть `https://wolfpack.robotics-rtuitlab.ru` и `https://auth.wolfpack.robotics-rtuitlab.ru` (без старого `:4443`).
 4. **Роли и доступ API:** роль **`admin`** — **realm role** или client role у **`wolfpack-control-web`**; оба варианта учитываются API. Либо **`CONTROL_ADMIN_USERNAMES`** у API (через запятую: `preferred_username` или email).
 5. **Control stack:** обновите **`control-api-env`** (`KEYCLOAK_ISSUER`, `KEYCLOAK_JWKS_URL` на новый хост auth), затем `kubectl apply -k deploy/k8s/control/` (namespace **`wolfpackcloud-control`**, Postgres PVC **10Gi**).
-6. **Rosout-bridge:** Secret **`rosout-bridge-secret`** в **`wolfpackcloud-zenoh`** (`ingest-token` = `ROSOUT_INGEST_TOKEN` у API), затем `kubectl apply -k deploy/k8s/rosout-bridge/`.
+6. **InfluxDB** (ROS-логи и события деплоя): см. [deploy/k8s/influxdb/README.md](deploy/k8s/influxdb/README.md). Кратко: `influxdb-secrets.yaml` → `kubectl apply -k deploy/k8s/influxdb/` → тот же admin-token в **`control-api-env`** как `INFLUXDB_TOKEN` (и `INFLUXDB_URL=http://wolfpackcloud-influxdb.wolfpackcloud-control.svc.cluster.local:8086`, `INFLUXDB_ORG=wolfpackcloud_influxdb`).
+7. **Rosout-bridge:** Secret **`rosout-bridge-secret`** в **`wolfpackcloud-zenoh`** (`ingest-token` = `ROSOUT_INGEST_TOKEN` у API, `influxdb-token` = `INFLUXDB_TOKEN` у API), затем `kubectl apply -k deploy/k8s/rosout-bridge/`. Bridge пишет `/rosout` **напрямо в InfluxDB** (bucket `ros_logs`); API ingest остаётся только для fallback/отладки.
+8. После деплоя API с Influx-only логами выполните миграцию **`004`** (drop `ros_log_entries` в PostgreSQL): `kubectl exec -n wolfpackcloud-control deploy/control-api -- alembic upgrade head`.
 
 <a id="keycloak-clean-deploy"></a>
 
@@ -104,7 +108,7 @@ kubectl rollout status deployment/keycloak -n wolfpackcloud-auth --timeout=600s
 2. `curl -sS -H "Authorization: Bearer $ACCESS_TOKEN" https://wolfpack.robotics-rtuitlab.ru/api/cluster/orchestration` (или `/api/cluster/nodes`, если есть в роутере).
 3. На странице «Ресурсы кластера» перетащите workload на другую ноду пула (worker/dev) → для произвольных deployment нужна роль realm **`admin`** в Keycloak.
 4. Проверка ingest (с master/VPS): `curl -sS -o /dev/null -w "%{http_code}" -X POST https://wolfpack.robotics-rtuitlab.ru/api/internal/rosout/one -H "Content-Type: application/json" -H "X-Ingest-Token: $ROSOUT_INGEST_TOKEN" -d '{"message":"smoke","level":"20"}'` → ожидается **204**.
-5. Вкладка логов робота: polling `GET /api/logs?network_id=...` после работы `rosout-bridge`.
+5. Вкладка логов робота и **Журнал → ROS-логи**: polling `GET /api/logs`; статус bridge/Influx — `GET /api/logs/status`.
 
 ## Переменные
 

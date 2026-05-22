@@ -201,11 +201,14 @@ a:hover { color: var(--accent-hover); }
   flex-direction: column;
   border-right: 1px solid var(--border);
   width: 100%;
+  height: 100%;
+  min-height: 0;
   margin: 0;
   padding: 0;
-  align-items: center;
+  align-items: stretch;
   background: var(--bg);
   transition: width 0.2s ease;
+  overflow: hidden;
 }
 
 .term-sidebar-toggle {
@@ -227,15 +230,35 @@ a:hover { color: var(--accent-hover); }
 .term-sidebar-toggle:hover { color: var(--accent); border-color: var(--accent); }
 .term-sidebar-toggle svg { width: 1.25rem; height: 1.25rem; }
 
+.term-sidebar-toggle--mobile {
+  display: none;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.term-sidebar-backdrop {
+  display: none;
+}
+
+.term-header-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .term-sidebar {
   width: 100%;
-  flex-shrink: 0;
+  flex: 1;
+  min-height: 0;
   padding: 0.5rem 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .term-sidebar-inner {
   padding: 0 0.5rem 0.5rem;
+  min-height: min-content;
 }
 
 .term-sidebar-link {
@@ -249,6 +272,9 @@ a:hover { color: var(--accent-hover); }
   border-left: 3px solid transparent;
   line-height: 1.3;
   white-space: nowrap;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
 }
 
 .term-sidebar-link:hover { color: var(--text); }
@@ -848,6 +874,40 @@ a:hover { color: var(--accent-hover); }
   .term-header {
     grid-column: 1;
   }
+
+  .term-sidebar-toggle--mobile {
+    display: flex;
+  }
+
+  .term-sidebar-toggle--desktop {
+    display: none;
+  }
+
+  .term-sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 3.5625rem 0 0 0;
+    z-index: 90;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: rgba(0, 0, 0, 0.55);
+    cursor: pointer;
+  }
+
+  .term-page.has-sidebar:not(.sidebar-expanded) .term-sidebar-wrap {
+    pointer-events: none;
+    visibility: hidden;
+  }
+
+  .term-page.has-sidebar.sidebar-expanded .term-sidebar-wrap {
+    pointer-events: auto;
+    visibility: visible;
+  }
+
+  .term-sidebar-inner {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+  }
   
   .term-app-layout {
     grid-template-columns: 1fr;
@@ -861,11 +921,16 @@ a:hover { color: var(--accent-hover); }
     z-index: 100;
     transform: translateX(-100%);
     transition: transform 0.2s ease;
+    width: var(--sidebar-width-expanded);
+    align-items: stretch;
   }
   
   .term-page.has-sidebar.sidebar-expanded .term-sidebar-wrap {
     transform: translateX(0);
-    width: var(--sidebar-width-expanded);
+  }
+
+  .term-page.has-sidebar.sidebar-expanded .term-sidebar-link > span:last-child {
+    display: inline;
   }
   
   .term-app-main {

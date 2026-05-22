@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     maintainer="WolfpackCloud",
     maintainer_email="control@wolfpack.local",
-    description="Ingest /rosout into Control API",
+    description="Ingest /rosout into InfluxDB (WolfpackCloud Control)",
     license="MIT",
     tests_require=["pytest"],
     entry_points={

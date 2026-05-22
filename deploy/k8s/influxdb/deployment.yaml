@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wolfpackcloud-influxdb
+  namespace: wolfpackcloud-control
+  labels:
+    app.kubernetes.io/name: wolfpackcloud-influxdb
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: wolfpackcloud-influxdb
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: wolfpackcloud-influxdb
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/arch
+                    operator: In
+                    values: ["arm64"]
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - orangepi5-abandon-alien
+      containers:
+        - name: influxdb
+          image: influxdb:2.7-alpine
+          ports:
+            - containerPort: 8086
+          env:
+            - name: DOCKER_INFLUXDB_INIT_MODE
+              value: setup
+            - name: DOCKER_INFLUXDB_INIT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: wolfpackcloud-influxdb-secret
+                  key: admin-user
+            - name: DOCKER_INFLUXDB_INIT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: wolfpackcloud-influxdb-secret
+                  key: admin-password
+            - name: DOCKER_INFLUXDB_INIT_ORG
+              value: wolfpackcloud_influxdb
+            - name: DOCKER_INFLUXDB_INIT_BUCKET
+              value: ros_logs
+            - name: DOCKER_INFLUXDB_INIT_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: wolfpackcloud-influxdb-secret
+                  key: admin-token
+            - name: DOCKER_INFLUXDB_INIT_RETENTION
+              value: 720h
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/influxdb2
+            - name: config
+              mountPath: /etc/influxdb2
+          readinessProbe:
+            exec:
+              command: ["influx", "ping"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["influx", "ping"]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: wolfpackcloud-influxdb-pvc
+        - name: config
+          emptyDir: {}

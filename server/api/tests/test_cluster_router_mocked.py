@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from kubernetes.client.rest import ApiException
 
 
 @pytest.fixture
@@ -53,8 +54,12 @@ def cluster_k8s_mock(monkeypatch):
             return enriched
         if name == "launch_preset_peer":
             return None
+        if name == "launch_preset_robot_agent":
+            return None
         if name == "scale_deployment":
             return None
+        if name == "get_deployment_node_hostname":
+            return "w1"
         raise AssertionError(f"unexpected call {name}")
 
     monkeypatch.setattr("app.routers.cluster._run_k8s", _run)
@@ -67,6 +72,8 @@ def cluster_bad_arch_mock(monkeypatch):
         if name == "list_worker_nodes":
             return [{"name": "bad", "ready": True, "architecture": "", "labels": {}}]
         if name == "launch_preset_peer":
+            return None
+        if name == "launch_preset_robot_agent":
             return None
         raise AssertionError(name)
 
@@ -91,6 +98,30 @@ async def test_cluster_orchestration_shape(async_client, make_access_token, clus
     assert body["workerNodes"][0]["name"] == "w1"
 
 
+@pytest.fixture
+def cluster_k8s_unauthorized_mock(monkeypatch):
+    from kubernetes.client.rest import ApiException
+
+    from app.services import k8s as k8s_svc
+
+    def _fail(*args, **kwargs):
+        raise ApiException(status=401, reason="Unauthorized")
+
+    monkeypatch.setattr(k8s_svc, "list_worker_nodes", _fail)
+
+
+@pytest.mark.asyncio
+async def test_cluster_orchestration_k8s_unauthorized_returns_502_not_500(
+    async_client,
+    make_access_token,
+    cluster_k8s_unauthorized_mock,
+):
+    token = make_access_token(email="k8s401@test", sub="k8s401")
+    r = await async_client.get("/api/cluster/orchestration", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 502
+    assert r.json()["detail"].startswith("kubernetes:")
+
+
 @pytest.mark.asyncio
 async def test_cluster_compute_presets(async_client, make_access_token, cluster_k8s_mock):
     token = make_access_token(email="cp@test", sub="cps")
@@ -112,6 +143,7 @@ async def test_cluster_launch_manual(async_client, make_access_token, cluster_k8
     data = r.json()
     assert data["ok"] is True
     assert data["node_hostname"] == "w1"
+    assert data.get("orchestration_trace") is None
 
 
 @pytest.mark.asyncio
@@ -123,7 +155,13 @@ async def test_cluster_launch_auto(async_client, make_access_token, cluster_k8s_
         json={"auto_orchestrate": True},
     )
     assert r.status_code == 200
-    assert r.json()["node_hostname"] == "w1"
+    data = r.json()
+    assert data["node_hostname"] == "w1"
+    trace = data.get("orchestration_trace")
+    assert trace is not None
+    assert len(trace["steps"]) == 4
+    assert trace["chosen"] == "w1"
+    assert any(n["selected"] for n in trace["nodes"])
 
 
 @pytest.mark.asyncio
@@ -169,10 +207,11 @@ async def test_cluster_stop_preset_allowed(async_client, make_access_token, clus
 
 
 @pytest.mark.asyncio
-async def test_cluster_stop_random_forbidden_for_user(async_client, make_access_token, cluster_k8s_mock):
+async def test_cluster_stop_unknown_deployment_allowed(async_client, make_access_token, cluster_k8s_mock):
     token = make_access_token(email="cr@test", sub="crs")
     r = await async_client.post(
         "/api/cluster/deployments/my-unknown-deployment/stop",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert r.status_code == 403
+    assert r.status_code == 200
+    assert r.json()["ok"] is True

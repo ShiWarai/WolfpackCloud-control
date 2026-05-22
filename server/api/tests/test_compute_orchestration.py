@@ -17,6 +17,7 @@ def _preset(
         id="t",
         deployment_name="t-dep",
         display_name="T",
+        kind="peer",
         publish_topic="/p",
         subscribe_topic="/s",
         peer_shard=0,
@@ -33,6 +34,7 @@ def _node(
     m_free: int | None = None,
     c_free: int | None = None,
     latency_ms: int = 0,
+    labels: dict | None = None,
 ) -> dict:
     mib = 256
     milli = 100
@@ -45,6 +47,7 @@ def _node(
         "estimated_free_memory_bytes": m,
         "estimated_free_cpu_milli": c,
         "orchestration_latency_ms": latency_ms,
+        "labels": labels or {},
     }
 
 
@@ -55,23 +58,27 @@ def settings() -> Settings:
 
 def test_static_f1_rejects_not_ready(settings: Settings) -> None:
     o = ComputeOrchestrator()
-    assert o._static_f1(_node("a", ready=False), settings) is False
+    p = _preset()
+    assert o._static_f1(_node("a", ready=False), settings, p) is False
 
 
 def test_static_f1_rejects_bad_arch(settings: Settings) -> None:
     o = ComputeOrchestrator()
-    assert o._static_f1(_node("a", arch="riscv64"), settings) is False
+    p = _preset()
+    assert o._static_f1(_node("a", arch="riscv64"), settings, p) is False
 
 
 def test_static_f1_accepts_amd64(settings: Settings) -> None:
     o = ComputeOrchestrator()
-    assert o._static_f1(_node("a", arch="amd64"), settings) is True
+    p = _preset()
+    assert o._static_f1(_node("a", arch="amd64"), settings, p) is True
 
 
 def test_static_f1_rejects_missing_peer_image_ref() -> None:
     o = ComputeOrchestrator()
     s = Settings(compute_peer_image_amd64="   ", compute_peer_image_arm64="")
-    assert o._static_f1(_node("a", arch="amd64"), s) is False
+    p = _preset()
+    assert o._static_f1(_node("a", arch="amd64"), s, p) is False
 
 
 def test_auto_skips_under_barrier_ram(settings: Settings) -> None:
@@ -166,3 +173,56 @@ def test_select_node_requires_explicit_mode() -> None:
     orch = ComputeOrchestrator()
     with pytest.raises(ValueError, match="ноду"):
         orch.select_node([_node("a")])
+
+
+def test_static_f1_rejects_auto_orchestration_blocked(settings: Settings) -> None:
+    o = ComputeOrchestrator()
+    node = _node(
+        "sber",
+        labels={"wolfpack.io/auto-orchestration": "blocked"},
+    )
+    ok, reason = o._static_f1_check(node, settings, _preset())
+    assert ok is False
+    assert reason == "auto_orchestration_blocked"
+
+
+def test_auto_skips_blocked_node(settings: Settings) -> None:
+    o = ComputeOrchestrator()
+    nodes = [
+        _node("sber", labels={"wolfpack.io/auto-orchestration": "blocked"}),
+        _node("good"),
+    ]
+    picked = o._select_node_auto(nodes, settings, _preset())
+    assert picked == "good"
+
+
+def test_manual_launch_on_blocked_node_allowed(settings: Settings) -> None:
+    orch = ComputeOrchestrator()
+    node = _node("sber", labels={"wolfpack.io/auto-orchestration": "blocked"})
+    assert orch.select_node([node], manual_hostname="sber") == "sber"
+
+
+def test_evaluate_auto_trace_shape(settings: Settings) -> None:
+    o = ComputeOrchestrator()
+    trace = o._evaluate_auto([_node("alpha"), _node("beta")], settings, _preset())
+    assert trace.error is None
+    assert trace.chosen in ("alpha", "beta")
+    assert len(trace.steps) == 4
+    assert {s.id for s in trace.steps} == {"f1", "q", "barrier", "f"}
+    assert len(trace.nodes) == 2
+    assert trace.task is not None
+    assert trace.ranking
+    selected = [n for n in trace.nodes if n.selected]
+    assert len(selected) == 1
+    assert selected[0].name == trace.chosen
+
+
+def test_evaluate_auto_trace_blocked_reason(settings: Settings) -> None:
+    o = ComputeOrchestrator()
+    trace = o._evaluate_auto(
+        [_node("sber", labels={"wolfpack.io/auto-orchestration": "blocked"})],
+        settings,
+        _preset(),
+    )
+    assert trace.error is not None
+    assert trace.nodes[0].f1_reason == "auto_orchestration_blocked"

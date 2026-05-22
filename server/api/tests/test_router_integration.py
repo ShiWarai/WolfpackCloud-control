@@ -14,6 +14,7 @@ async def test_health(async_client):
     body = r.json()
     assert body["status"] == "ok"
     assert "version" in body
+    assert body.get("influxdb") == "disabled"
 
 
 @pytest.mark.asyncio
@@ -42,6 +43,10 @@ async def test_migrate_by_name_any_authenticated_user(async_client, make_access_
     monkeypatch.setattr(
         "app.routers.workloads.k8s_svc.patch_deployment_node_selector",
         fake_patch,
+    )
+    monkeypatch.setattr(
+        "app.routers.workloads.k8s_svc.get_deployment_node_hostname",
+        lambda settings, deployment_name: "old-host",  # noqa: ARG005
     )
 
     async def instant(fn, *args, **kwargs):
@@ -95,6 +100,10 @@ async def test_user_migrate_calls_patch(async_client, make_access_token, db_sess
         "app.routers.workloads.k8s_svc.patch_deployment_node_selector",
         fake_patch,
     )
+    monkeypatch.setattr(
+        "app.routers.workloads.k8s_svc.get_deployment_node_hostname",
+        lambda settings, deployment_name: "node-a",  # noqa: ARG005
+    )
 
     async def instant(fn, *args, **kwargs):
         return fn(*args, **kwargs)
@@ -119,6 +128,10 @@ async def test_migrate_value_error_maps_to_400(async_client, make_access_token, 
     monkeypatch.setattr(
         "app.routers.workloads.k8s_svc.patch_deployment_node_selector",
         boom,
+    )
+    monkeypatch.setattr(
+        "app.routers.workloads.k8s_svc.get_deployment_node_hostname",
+        lambda settings, deployment_name: "old-host",  # noqa: ARG005
     )
 
     async def instant(fn, *args, **kwargs):

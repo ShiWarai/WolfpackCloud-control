@@ -68,8 +68,17 @@ async def test_metrics_heartbeat_updates_last_seen(async_client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_logs_list_empty(async_client, make_access_token):
+async def test_logs_status_disabled_influx(async_client, make_access_token):
+    token = make_access_token(email="ls@test", sub="lss")
+    r = await async_client.get("/api/logs/status", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["influxdb"] == "disabled"
+    assert body["message"] is not None
+
+
+@pytest.mark.asyncio
+async def test_logs_list_requires_influx(async_client, make_access_token):
     token = make_access_token(email="lg@test", sub="lgs")
     r = await async_client.get("/api/logs", headers={"Authorization": f"Bearer {token}"})
-    assert r.status_code == 200
-    assert r.json() == []
+    assert r.status_code == 503

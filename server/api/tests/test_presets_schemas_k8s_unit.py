@@ -15,6 +15,7 @@ from app.services.resource_quantity import parse_k8s_cpu_millicores, parse_k8s_m
 def test_list_presets_includes_alpha():
     ids = {p.id for p in list_compute_presets()}
     assert "compute-peer-alpha" in ids
+    assert "demo-robot-agent" in ids
 
 
 def test_get_preset_unknown_returns_none():

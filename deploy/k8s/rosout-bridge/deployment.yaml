@@ -47,6 +47,17 @@ spec:
                 secretKeyRef:
                   name: rosout-bridge-secret
                   key: ingest-token
+            - name: INFLUXDB_URL
+              value: http://wolfpackcloud-influxdb.wolfpackcloud-control.svc.cluster.local:8086
+            - name: INFLUXDB_ORG
+              value: wolfpackcloud_influxdb
+            - name: INFLUXDB_BUCKET_ROS_LOGS
+              value: ros_logs
+            - name: INFLUXDB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: rosout-bridge-secret
+                  key: influxdb-token
           resources:
             requests:
               cpu: 100m

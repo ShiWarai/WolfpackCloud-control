@@ -26,3 +26,11 @@ presets:
     peer_shard: 3
     memory_request_mib: 256
     cpu_request_millicores: 100
+
+  - id: demo-robot-agent
+    kind: robot_agent
+    deployment_name: demo-robot-agent
+    display_name: Тестовый робот — pairing + heartbeat
+    robot_name: demo-robot-k8s
+    memory_request_mib: 128
+    cpu_request_millicores: 50

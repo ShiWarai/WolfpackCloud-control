@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import secrets
 from typing import Any
 
@@ -15,10 +16,12 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.models import Architecture, LogicalNode, Network, User, UserRole, WorkloadStatus
 from app.schemas import WorkloadCreateRequest, WorkloadMigrateRequest, WorkloadResponse
+from app.services import deployment_events_store
 from app.services import k8s as k8s_svc
 
 router = APIRouter(prefix="/api/workloads", tags=["workloads"])
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 # Не двигать инфраструктурные деплойменты из UI (как в cluster.stop).
 _NON_DRAGGABLE_DEPLOYMENTS = frozenset({"zenoh-router"})
@@ -26,6 +29,13 @@ _NON_DRAGGABLE_DEPLOYMENTS = frozenset({"zenoh-router"})
 
 async def _run_k8s(fn, *args, **kwargs):
     return await asyncio.to_thread(fn, *args, **kwargs)
+
+
+async def _record_deployment_event(**kwargs: Any) -> None:
+    try:
+        await deployment_events_store.record_deployment_event(settings, **kwargs)
+    except Exception as exc:
+        logger.warning("Failed to record deployment event: %s", exc)
 
 
 def _image_for_arch(arch: Architecture) -> str:
@@ -111,9 +121,21 @@ async def start_workload(
     user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
     ln = await _owned_logical_node(db, user, deployment_name)
+    to_host = ln.desired_node_hostname or await _run_k8s(
+        k8s_svc.get_deployment_node_hostname,
+        settings,
+        deployment_name,
+    )
     await _run_k8s(k8s_svc.scale_deployment, settings, deployment_name, 1)
     ln.status = WorkloadStatus.RUNNING
     await db.commit()
+    await _record_deployment_event(
+        deployment=deployment_name,
+        status="started",
+        from_host="",
+        to_host=to_host,
+        user_id=user.id,
+    )
     return {"ok": True, "deployment": deployment_name, "replicas": 1}
 
 
@@ -124,9 +146,21 @@ async def stop_workload(
     user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
     ln = await _owned_logical_node(db, user, deployment_name)
+    from_host = await _run_k8s(
+        k8s_svc.get_deployment_node_hostname,
+        settings,
+        deployment_name,
+    )
     await _run_k8s(k8s_svc.scale_deployment, settings, deployment_name, 0)
     ln.status = WorkloadStatus.STOPPED
     await db.commit()
+    await _record_deployment_event(
+        deployment=deployment_name,
+        status="stopped",
+        from_host=from_host,
+        to_host=None,
+        user_id=user.id,
+    )
     return {"ok": True, "deployment": deployment_name, "replicas": 0}
 
 
@@ -138,6 +172,11 @@ async def migrate_workload(
     user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
     ln = await _owned_logical_node(db, user, deployment_name)
+    from_host = await _run_k8s(
+        k8s_svc.get_deployment_node_hostname,
+        settings,
+        deployment_name,
+    )
     try:
         await _run_k8s(
             k8s_svc.patch_deployment_node_selector,
@@ -149,6 +188,13 @@ async def migrate_workload(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     ln.desired_node_hostname = body.node_hostname
     await db.commit()
+    await _record_deployment_event(
+        deployment=deployment_name,
+        status="success",
+        from_host=from_host,
+        to_host=body.node_hostname,
+        user_id=user.id,
+    )
     return {"ok": True, "deployment": deployment_name, "node_hostname": body.node_hostname}
 
 
@@ -171,7 +217,7 @@ async def delete_workload(
 async def migrate_any_deployment(
     deployment_name: str,
     body: WorkloadMigrateRequest,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Миграция любого Deployment в namespace zenoh — любой залогиненный пользователь."""
     if deployment_name in _NON_DRAGGABLE_DEPLOYMENTS:
@@ -179,6 +225,11 @@ async def migrate_any_deployment(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Этот деплоймент нельзя переносить из интерфейса",
         )
+    from_host = await _run_k8s(
+        k8s_svc.get_deployment_node_hostname,
+        settings,
+        deployment_name,
+    )
     try:
         await _run_k8s(
             k8s_svc.patch_deployment_node_selector,
@@ -188,6 +239,13 @@ async def migrate_any_deployment(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    await _record_deployment_event(
+        deployment=deployment_name,
+        status="success",
+        from_host=from_host,
+        to_host=body.node_hostname,
+        user_id=user.id,
+    )
     return {"ok": True, "deployment": deployment_name, "node_hostname": body.node_hostname}
 
 

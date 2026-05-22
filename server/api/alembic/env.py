@@ -17,7 +17,6 @@ from app.models import (
     Network,
     PairCode,
     Robot,
-    RosLogEntry,
     User,
 )  # noqa: F401
 

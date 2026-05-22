@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores'
 
@@ -10,17 +10,39 @@ const user = computed(() => authStore.user)
 const isAdmin = computed(() => authStore.isAdmin)
 
 const sidebarExpanded = ref(false)
+const isMobileViewport = ref(false)
+
+function syncViewport() {
+  isMobileViewport.value = window.matchMedia('(max-width: 768px)').matches
+}
 
 onMounted(() => {
+  syncViewport()
+  window.addEventListener('resize', syncViewport, { passive: true })
+
+  if (isMobileViewport.value) {
+    sidebarExpanded.value = false
+    return
+  }
   const saved = localStorage.getItem('wpc-monitoring-sidebar-expanded')
   if (saved === '1') {
     sidebarExpanded.value = true
   }
 })
 
+onUnmounted(() => {
+  window.removeEventListener('resize', syncViewport)
+})
+
 function toggleSidebar() {
   sidebarExpanded.value = !sidebarExpanded.value
   localStorage.setItem('wpc-monitoring-sidebar-expanded', sidebarExpanded.value ? '1' : '0')
+}
+
+function closeSidebarOnNavigate() {
+  if (!isMobileViewport.value || !sidebarExpanded.value) return
+  sidebarExpanded.value = false
+  localStorage.setItem('wpc-monitoring-sidebar-expanded', '0')
 }
 
 function handleLogout() {
@@ -30,6 +52,20 @@ function handleLogout() {
 function isActive(path: string): boolean {
   return route.path === path || route.path.startsWith(path + '/')
 }
+
+watch(
+  () => route.path,
+  () => {
+    closeSidebarOnNavigate()
+  }
+)
+
+watch(isMobileViewport, (mobile) => {
+  if (mobile) {
+    sidebarExpanded.value = false
+    localStorage.setItem('wpc-monitoring-sidebar-expanded', '0')
+  }
+})
 </script>
 
 <template>
@@ -37,13 +73,26 @@ function isActive(path: string): boolean {
     <div class="term-header-logo-cell">
       <RouterLink to="/dashboard" class="term-brand">
         <img src="/icon.svg" alt="">
-        <span>Control</span>
+        <span>WolfpackCloud</span>
       </RouterLink>
     </div>
     
     <header class="term-header">
       <div class="term-brand-wrap">
-        <span class="term-text-dim" v-if="!sidebarExpanded">WolfpackCloud Control</span>
+        <button
+          type="button"
+          class="term-sidebar-toggle term-sidebar-toggle--mobile"
+          @click="toggleSidebar"
+          :aria-expanded="sidebarExpanded"
+          aria-label="Открыть или закрыть меню"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <line x1="3" y1="6" x2="21" y2="6"/>
+            <line x1="3" y1="12" x2="21" y2="12"/>
+            <line x1="3" y1="18" x2="21" y2="18"/>
+          </svg>
+        </button>
+        <span class="term-text-dim term-header-title" v-if="!sidebarExpanded">WolfpackCloud</span>
       </div>
       <nav class="term-nav" aria-label="Верхнее меню">
         <RouterLink 
@@ -72,12 +121,20 @@ function isActive(path: string): boolean {
         </a>
       </nav>
     </header>
-    
+
+    <button
+      v-if="sidebarExpanded && isMobileViewport"
+      type="button"
+      class="term-sidebar-backdrop"
+      aria-label="Закрыть меню"
+      @click="toggleSidebar"
+    />
+
     <div class="term-app-layout">
       <div class="term-sidebar-wrap">
         <button 
           type="button" 
-          class="term-sidebar-toggle" 
+          class="term-sidebar-toggle term-sidebar-toggle--desktop" 
           @click="toggleSidebar"
           aria-label="Открыть или закрыть боковую панель"
         >
@@ -93,6 +150,7 @@ function isActive(path: string): boolean {
               to="/robots" 
               class="term-sidebar-link" 
               :class="{ 'term-active': isActive('/robots') || isActive('/dashboard') }"
+              @click="closeSidebarOnNavigate"
             >
               <span class="term-sidebar-icon">
                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -107,6 +165,7 @@ function isActive(path: string): boolean {
               class="term-sidebar-link" 
               data-testid="nav-orchestration"
               :class="{ 'term-active': isActive('/orchestration') }"
+              @click="closeSidebarOnNavigate"
             >
               <span class="term-sidebar-icon">
                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -118,9 +177,24 @@ function isActive(path: string): boolean {
               <span>Ресурсы</span>
             </RouterLink>
             <RouterLink 
+              to="/journal" 
+              class="term-sidebar-link"
+              :class="{ 'term-active': isActive('/journal') }"
+              @click="closeSidebarOnNavigate"
+            >
+              <span class="term-sidebar-icon">
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M4 4h12v12H4z"/>
+                  <path d="M7 8h6M7 11h6M7 14h4"/>
+                </svg>
+              </span>
+              <span>Журнал</span>
+            </RouterLink>
+            <RouterLink 
               to="/account" 
               class="term-sidebar-link"
               :class="{ 'term-active': isActive('/account') }"
+              @click="closeSidebarOnNavigate"
             >
               <span class="term-sidebar-icon">
                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -134,6 +208,7 @@ function isActive(path: string): boolean {
               to="/pairing" 
               class="term-sidebar-link"
               :class="{ 'term-active': isActive('/pairing') }"
+              @click="closeSidebarOnNavigate"
             >
               <span class="term-sidebar-icon">
                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -155,7 +230,7 @@ function isActive(path: string): boolean {
         </main>
         <footer class="term-footer">
           <span v-if="user">{{ user.name }} ({{ isAdmin ? 'Admin' : 'User' }}) · </span>
-          WolfpackCloud Control
+          WolfpackCloud
         </footer>
       </div>
     </div>

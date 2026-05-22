@@ -222,6 +222,7 @@ class HealthResponse(BaseModel):
     version: str
     database: str = "connected"
     metrics_backend: str = "heartbeat_only"
+    influxdb: str = "disabled"
 
 
 # =============================================================================
@@ -332,6 +333,48 @@ class ComputePresetLaunchRequest(BaseModel):
         return self
 
 
+class OrchestrationStepResponse(BaseModel):
+    id: str
+    name: str
+    formula: str
+
+
+class OrchestrationNodeTraceResponse(BaseModel):
+    name: str
+    ready: bool
+    architecture: str
+    f1_passed: bool
+    f1_reason: str | None = None
+    q_ram: float | None = None
+    q_cpu: float | None = None
+    barrier_passed: bool | None = None
+    f: float | None = None
+    latency_ms: int | None = None
+    selected: bool = False
+
+
+class OrchestrationRankingEntryResponse(BaseModel):
+    node_hostname: str
+    f: float
+    latency_ms: int
+
+
+class OrchestrationTaskResponse(BaseModel):
+    memory_request_mib: int
+    cpu_request_millicores: int
+    weight_ram: float
+    weight_cpu: float
+
+
+class OrchestrationTraceResponse(BaseModel):
+    steps: list[OrchestrationStepResponse]
+    nodes: list[OrchestrationNodeTraceResponse]
+    chosen: str | None = None
+    ranking: list[OrchestrationRankingEntryResponse] = Field(default_factory=list)
+    task: OrchestrationTaskResponse | None = None
+    error: str | None = None
+
+
 class ComputePresetLaunchResponse(BaseModel):
     """Результат запуска пресета на ноде."""
 
@@ -341,6 +384,7 @@ class ComputePresetLaunchResponse(BaseModel):
     node_hostname: str
     architecture: str
     image: str
+    orchestration_trace: OrchestrationTraceResponse | None = None
 
 
 # =============================================================================
@@ -361,12 +405,22 @@ class RosLogEntryResponse(BaseModel):
     recorded_at: datetime
 
 
+class LogsStatusResponse(BaseModel):
+    """Доступность подсистемы ROS-логов для UI."""
+
+    influxdb: str
+    rosout_bridge: str
+    message: str | None = None
+
+
 class RosOutIngestItem(BaseModel):
     """Одно сообщение /rosout от bridge."""
 
     network_id: int | None = None
+    host_id: int | None = None
     ros_node_name: str | None = None
     level: str | None = None
+    topic: str | None = Field(default="/rosout", max_length=512)
     message: str
 
 
@@ -374,6 +428,21 @@ class RosOutIngestBatch(BaseModel):
     """Батч от rosout-bridge."""
 
     entries: list[RosOutIngestItem]
+
+
+class DeploymentEventResponse(BaseModel):
+    """Событие миграции/деплоя."""
+
+    id: int
+    deployment: str
+    from_host: str | None = None
+    to_host: str | None = None
+    status: str
+    user_id: int | None = None
+    preset_id: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    created_at: datetime
 
 
 # =============================================================================

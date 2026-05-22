@@ -1,12 +1,11 @@
 """Внутренние эндпоинты (rosout-bridge, без JWT)."""
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.database import get_db
-from app.models import RosLogEntry
 from app.schemas import RosOutIngestBatch, RosOutIngestItem
+from app.services import ros_logs_store
+from app.services.influx import InfluxError
 
 router = APIRouter(prefix="/api/internal", tags=["internal"])
 settings = get_settings()
@@ -17,40 +16,36 @@ def _verify_ingest_token(x_ingest_token: str | None) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid ingest token")
 
 
+async def _write_items(items: list[RosOutIngestItem]) -> None:
+    if not settings.influxdb_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="InfluxDB не настроен",
+        )
+    try:
+        await ros_logs_store.write_ros_logs(settings, items)
+    except InfluxError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"InfluxDB: {exc}",
+        ) from exc
+
+
 @router.post("/rosout", status_code=status.HTTP_204_NO_CONTENT)
 async def ingest_rosout(
     body: RosOutIngestBatch,
-    db: AsyncSession = Depends(get_db),
     x_ingest_token: str | None = Header(None, alias="X-Ingest-Token"),
 ) -> None:
     """Батч записей /rosout."""
     _verify_ingest_token(x_ingest_token)
-    for item in body.entries:
-        db.add(
-            RosLogEntry(
-                network_id=item.network_id,
-                ros_node_name=item.ros_node_name,
-                level=item.level,
-                message=item.message,
-            )
-        )
-    await db.commit()
+    await _write_items(body.entries)
 
 
 @router.post("/rosout/one", status_code=status.HTTP_204_NO_CONTENT)
 async def ingest_rosout_one(
     item: RosOutIngestItem,
-    db: AsyncSession = Depends(get_db),
     x_ingest_token: str | None = Header(None, alias="X-Ingest-Token"),
 ) -> None:
     """Одна строка (удобно для простого bridge)."""
     _verify_ingest_token(x_ingest_token)
-    db.add(
-        RosLogEntry(
-            network_id=item.network_id,
-            ros_node_name=item.ros_node_name,
-            level=item.level,
-            message=item.message,
-        )
-    )
-    await db.commit()
+    await _write_items([item])

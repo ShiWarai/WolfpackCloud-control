@@ -15,16 +15,21 @@ from kubernetes.client import (
     V1Deployment,
     V1DeploymentSpec,
     V1DeploymentStrategy,
+    V1EmptyDirVolumeSource,
     V1EnvVar,
+    V1EnvVarSource,
     V1LabelSelector,
     V1NodeAffinity,
     V1NodeSelector,
     V1NodeSelectorRequirement,
     V1NodeSelectorTerm,
+    V1ObjectFieldSelector,
     V1ObjectMeta,
     V1PodSpec,
     V1PodTemplateSpec,
     V1ResourceRequirements,
+    V1Volume,
+    V1VolumeMount,
 )
 
 from app.config import Settings
@@ -35,12 +40,38 @@ logger = logging.getLogger(__name__)
 
 SAFE_NAME = re.compile(r"[^a-z0-9-]+")
 
+_k8s_configured = False
+
+
+def normalize_incluster_bearer_auth(cfg: client.Configuration) -> None:
+    """kubernetes>=36: auth_settings() читает только api_key['BearerToken'], не authorization."""
+    raw = cfg.api_key or {}
+    bearer_token = raw.get("BearerToken")
+    auth = raw.get("authorization", "")
+    token: str | None = None
+    if isinstance(bearer_token, str) and bearer_token.strip():
+        token = bearer_token.strip()
+    elif isinstance(auth, str) and auth.lower().startswith("bearer "):
+        token = auth.split(" ", 1)[1].strip()
+    elif isinstance(auth, str) and auth.strip():
+        token = auth.strip()
+    if token:
+        cfg.api_key = {"BearerToken": token}
+        cfg.api_key_prefix = {"BearerToken": "Bearer"}
+
 
 def _configure_k8s() -> None:
+    global _k8s_configured
+    if _k8s_configured:
+        return
     try:
         config.load_incluster_config()
+        cfg = client.Configuration.get_default_copy()
+        normalize_incluster_bearer_auth(cfg)
+        client.Configuration.set_default(cfg)
     except config.ConfigException:
         config.load_kube_config()
+    _k8s_configured = True
 
 
 def _node_has_control_plane_label(labels: dict[str, str]) -> bool:
@@ -348,6 +379,33 @@ def scale_deployment(settings: Settings, deployment_name: str, replicas: int) ->
     apps.patch_namespaced_deployment(deployment_name, settings.k8s_namespace, body)
 
 
+def get_deployment_node_hostname(settings: Settings, deployment_name: str) -> str | None:
+    """Текущий nodeSelector kubernetes.io/hostname у Deployment (если задан)."""
+    _configure_k8s()
+    apps = client.AppsV1Api()
+    dep = apps.read_namespaced_deployment(deployment_name, settings.k8s_namespace)
+    selector = dep.spec.template.spec.node_selector or {}
+    return selector.get("kubernetes.io/hostname")
+
+
+def get_rosout_bridge_status(settings: Settings) -> str:
+    """running | not_running | unknown — статус Deployment rosout-bridge."""
+    try:
+        _configure_k8s()
+        apps = client.AppsV1Api()
+        dep = apps.read_namespaced_deployment("rosout-bridge", settings.k8s_namespace)
+    except ApiException:
+        return "unknown"
+    except Exception:
+        return "unknown"
+
+    replicas = dep.spec.replicas or 0
+    ready = dep.status.ready_replicas or 0
+    if replicas > 0 and ready > 0:
+        return "running"
+    return "not_running"
+
+
 ZENOH_OVERRIDE = (
     'mode="client";connect/endpoints='
     '["tcp/zenoh-router.wolfpackcloud-zenoh.svc.cluster.local:7447"];'
@@ -363,6 +421,36 @@ def arch_to_image(settings: Settings, arch: str) -> str:
     if a == "arm64":
         return settings.compute_peer_image_arm64
     raise ValueError(f"unsupported node architecture: {arch!r}")
+
+
+def _image_ref_for_arch(settings: Settings, arch: str, amd64: str, arm64: str) -> str:
+    a = (arch or "").strip().lower()
+    if a == "amd64":
+        ref = (amd64 or "").strip()
+    elif a == "arm64":
+        ref = (arm64 or "").strip()
+    else:
+        raise ValueError(f"unsupported node architecture: {arch!r}")
+    if not ref:
+        raise ValueError(f"image not configured for architecture: {arch!r}")
+    return ref
+
+
+def arch_to_image_for_preset(settings: Settings, arch: str, preset: ComputePreset) -> str:
+    """Образ пресета по архитектуре ноды (peer или robot-agent)."""
+    if preset.kind == "robot_agent":
+        return _image_ref_for_arch(
+            settings,
+            arch,
+            settings.control_robot_agent_image_amd64,
+            settings.control_robot_agent_image_arm64,
+        )
+    return arch_to_image(settings, arch)
+
+
+CONTROL_API_CLUSTER_URL = (
+    "http://control-api.wolfpackcloud-control.svc.cluster.local:8000"
+)
 
 
 def _namespaced_deployment_exists(
@@ -472,6 +560,126 @@ def launch_preset_peer(
                     "containers": [
                         {
                             "name": "peer",
+                            "image": image,
+                            "imagePullPolicy": "Always",
+                        }
+                    ],
+                }
+            },
+        }
+    }
+    apps.patch_namespaced_deployment(
+        preset.deployment_name,
+        settings.k8s_namespace,
+        body,
+    )
+
+
+def build_preset_robot_agent_deployment(
+    *,
+    settings: Settings,
+    preset: ComputePreset,
+    node_hostname: str,
+    image: str,
+) -> V1Deployment:
+    """Deployment demo-robot-agent из каталога пресетов."""
+    deployment_name = preset.deployment_name
+    labels = {
+        "app.kubernetes.io/name": deployment_name,
+        "app.kubernetes.io/component": "control-robot-agent",
+    }
+    mem_mib = int(preset.memory_request_mib)
+    cpu_milli = int(preset.cpu_request_millicores)
+    container = V1Container(
+        name="agent",
+        image=image,
+        image_pull_policy="Always",
+        env=[
+            V1EnvVar(
+                name="HOSTNAME",
+                value_from=V1EnvVarSource(
+                    field_ref=V1ObjectFieldSelector(field_path="metadata.name"),
+                ),
+            ),
+            V1EnvVar(
+                name="POD_IP",
+                value_from=V1EnvVarSource(
+                    field_ref=V1ObjectFieldSelector(field_path="status.podIP"),
+                ),
+            ),
+            V1EnvVar(name="WPC_SERVER_URL", value=CONTROL_API_CLUSTER_URL),
+            V1EnvVar(
+                name="WPC_METRICS_URL",
+                value=f"{CONTROL_API_CLUSTER_URL}/api/metrics",
+            ),
+            V1EnvVar(name="WPC_ROBOT_NAME", value=preset.robot_name),
+        ],
+        volume_mounts=[
+            V1VolumeMount(name="agent-data", mount_path="/var/lib/wpc-agent"),
+        ],
+        resources=V1ResourceRequirements(
+            requests={
+                "cpu": f"{cpu_milli}m",
+                "memory": f"{mem_mib}Mi",
+            },
+            limits={"memory": f"{max(mem_mib * 2, mem_mib)}Mi"},
+        ),
+    )
+    pod_spec = V1PodSpec(
+        containers=[container],
+        node_selector={"kubernetes.io/hostname": node_hostname},
+        volumes=[V1Volume(name="agent-data", empty_dir=V1EmptyDirVolumeSource())],
+    )
+    template = V1PodTemplateSpec(
+        metadata=V1ObjectMeta(labels=labels),
+        spec=pod_spec,
+    )
+    spec = V1DeploymentSpec(
+        replicas=0,
+        strategy=V1DeploymentStrategy(type="Recreate"),
+        selector=V1LabelSelector(match_labels={"app.kubernetes.io/name": deployment_name}),
+        template=template,
+    )
+    meta = V1ObjectMeta(
+        name=deployment_name,
+        namespace=settings.k8s_namespace,
+        labels=labels,
+    )
+    return V1Deployment(
+        api_version="apps/v1",
+        kind="Deployment",
+        metadata=meta,
+        spec=spec,
+    )
+
+
+def launch_preset_robot_agent(
+    settings: Settings,
+    preset: ComputePreset,
+    node_hostname: str,
+    image: str,
+) -> None:
+    """Создать robot-agent deployment при отсутствии, затем привязать ноду, образ и scale=1."""
+    _configure_k8s()
+    apps = client.AppsV1Api()
+    if not _namespaced_deployment_exists(apps, settings, preset.deployment_name):
+        dep = build_preset_robot_agent_deployment(
+            settings=settings,
+            preset=preset,
+            node_hostname=node_hostname,
+            image=image,
+        )
+        apps.create_namespaced_deployment(settings.k8s_namespace, dep)
+
+    body: dict[str, Any] = {
+        "spec": {
+            "replicas": 1,
+            "template": {
+                "spec": {
+                    "nodeSelector": {"kubernetes.io/hostname": node_hostname},
+                    "containers": [
+                        {
+                            "name": "agent",
                             "image": image,
                             "imagePullPolicy": "Always",
                         }
