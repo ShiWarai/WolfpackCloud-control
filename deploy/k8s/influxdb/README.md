@@ -12,7 +12,9 @@ cp influxdb-secrets.example.yaml influxdb-secrets.yaml
 kubectl apply -f influxdb-secrets.yaml
 ```
 
-Тот же `admin-token` добавьте в `control-api-env` как `INFLUXDB_TOKEN`.
+Тот же `admin-token` пропишите в `control-api-env` (`INFLUXDB_TOKEN`) и в `rosout-bridge-secret` (`influxdb-token`).
+
+**Ротация на уже работающем InfluxDB** (PVC не пустой): смена Secret сама по себе не обновит токен внутри БД. Создайте новый operator token через `influx auth create` (старым admin-токеном), обновите все Secret, затем отзовите старый токен — либо пересоздайте PVC (потеря данных в Influx).
 
 ## Деплой
 
