@@ -93,7 +93,16 @@ export KEYCLOAK_PASSWORD='***'
 | Файл | Назначение |
 |------|------------|
 | [`control-api-smoke.js`](control-api-smoke.js) | Короткий смок, можно без JWT (cluster вернёт 401). |
-| [`control-api-load.js`](control-api-load.js) | «Тяжёлый» прогон: **только с JWT**, много вызовов cluster + `/api/auth/me` + `/api/workloads` за итерацию. |
+| [`control-api-load.js`](control-api-load.js) | «Тяжёлый» прогон: **только с JWT**, много вызовов cluster + `/api/auth/me` + `/api/workloads` за итерацию. Используется [`run-load.sh`](run-load.sh). |
+| [`control-api-openapi-hammer.js`](control-api-openapi-hammer.js) | Удар по **`GET /api/openapi.json`** (без JWT); с `ACCESS_TOKEN` — batch orchestration/nodes/pods + `/api/auth/me`. Ramping VUs (`VUS_MAX`, `HOLD_DURATION`, …). |
+
+Пример hammer (staging или prod с guard):
+
+```bash
+export BASE_URL=https://staging.wolfpack.robotics-rtuitlab.ru
+export ACCESS_TOKEN="$(./fetch-keycloak-token.sh)"   # опционально
+k6 run control-api-openapi-hammer.js -e BASE_URL="$BASE_URL" -e VUS_MAX=40
+```
 
 ## Автоматический токен (password grant)
 

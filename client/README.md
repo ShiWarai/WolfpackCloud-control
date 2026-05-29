@@ -1,82 +1,112 @@
 # WolfpackCloud Client
 
-Веб-приложение для управления роботами на Vue 3.
+SPA для управления роботами, оркестрации workloads и просмотра ROS-логов. Часть [WolfpackCloud-control](../README.md).
 
 ## Технологии
 
-- Vue 3 + Composition API
-- TypeScript
-- Vite
-- Vue Router
+- Vue 3 (Composition API) + TypeScript
+- Vite 6
+- Vue Router 4
 - Pinia
 - Axios
-- Tailwind CSS
+- **keycloak-js** (OIDC, PKCE, `check-sso`)
+- Стили: глобальный [`src/style.css`](src/style.css) (терминальная тема; **Tailwind не используется**)
 
 ## Разработка
 
-### Установка зависимостей
+### Зависимости
 
 ```bash
-npm install
+npm ci
 ```
 
-### Запуск dev-сервера
+### Dev-сервер
 
 ```bash
 npm run dev
 ```
 
-Откроется на http://localhost:5173
+По умолчанию: http://localhost:5173
 
-### Сборка
+С API и Keycloak через [`docker-compose.dev.yml`](../docker-compose.dev.yml) задайте (или `client/.env.development.local`):
+
+| Переменная | Назначение |
+|------------|------------|
+| `VITE_API_BASE_URL` | Базовый URL API без `/api` на конце, напр. `http://localhost:9200` |
+| `VITE_KEYCLOAK_URL` | Базовый URL Keycloak, напр. `http://localhost:8080` |
+| `VITE_KEYCLOAK_REALM` | Realm, по умолчанию `wolfpack-control` |
+| `VITE_KEYCLOAK_CLIENT_ID` | Публичный клиент, по умолчанию `wolfpack-control-web` |
+
+Запросы к API идут на `{VITE_API_BASE_URL}/api/...` (см. [`src/api/client.ts`](src/api/client.ts)).
+
+### Сборка и проверки
 
 ```bash
-npm run build
-```
-
-Результат в `dist/`
-
-### Линтинг
-
-```bash
+npm run build      # vue-tsc + vite → dist/
+npm run preview    # превью production-сборки
 npm run lint
+npm run type-check
 ```
 
-## Docker
+### Docker (production-образ)
 
 ```bash
-# Сборка образа
-docker build -t wpc-client .
-
-# Запуск
-docker run -p 9101:80 wpc-client
+docker build -t wolfpack-control-client .
+docker run -p 8080:80 wolfpack-control-client
 ```
 
-## Переменные окружения
+Build-args для prod (через BuildKit, см. корневой README): `VITE_API_URL`, `VITE_API_BASE_URL`, `VITE_KEYCLOAK_*`.
 
-| Переменная | Описание | По умолчанию |
-|------------|----------|--------------|
-| VITE_API_URL | URL API | /api |
-| VITE_GRAFANA_URL | URL Grafana | http://localhost:9200 |
-| VITE_SUPERSET_URL | URL Superset | http://localhost:9300 |
+## Маршруты
 
-## Структура
+| Путь | Компонент | Описание |
+|------|-----------|----------|
+| `/login` | LoginPage | Keycloak login |
+| `/dashboard` | DashboardPage | Сводка |
+| `/robots` | RobotsPage | Список роботов |
+| `/robots/:id` | RobotDetailPage | Карточка, логи, метрики |
+| `/pairing` | PairingPage | Подтверждение pairing-кода |
+| `/orchestration` | OrchestrationPage | Кластер, drag-and-drop подов |
+| `/journal` | JournalPage | ROS-логи (Influx) |
+| `/account` | AccountPage | Профиль |
+
+Guard: [`src/router/index.ts`](src/router/index.ts) — `requiresAuth` / Keycloak `check-sso`.
+
+E2E-селекторы: `data-testid="login-keycloak"`, `nav-orchestration`, `orchestration-heading` (см. [e2e/README.md](../e2e/README.md)).
+
+## Структура `src/`
 
 ```
 src/
-├── api/           # Axios client, API services
-├── components/    # Vue компоненты
-├── layouts/       # Layout компоненты
-├── pages/         # Страницы (views)
-├── router/        # Vue Router
-├── stores/        # Pinia stores
-└── types/         # TypeScript типы
+├── api/              # HTTP-клиент и модули (auth, robots, cluster, logs, …)
+├── components/       # UI (orchestration/, LogScrollPanel, RobotCard, …)
+├── composables/      # polling, drag-drop, log buffer
+├── layouts/          # DefaultLayout
+├── pages/            # маршруты SPA
+├── router/
+├── stores/           # Pinia (auth, robots)
+├── keycloak.ts       # инициализация Keycloak
+└── types/
 ```
 
-## Функционал
+## API-модули (клиент)
 
-- Аутентификация (JWT)
-- Dashboard со статистикой
-- Список роботов с фильтрацией
-- Привязка роботов по коду
-- Ссылки на Grafana/Superset
+| Модуль | Backend |
+|--------|---------|
+| `auth.ts` | `/api/auth` |
+| `robots.ts`, `pairing.ts` | `/api/robots`, `/api/pair` |
+| `cluster.ts`, `workloads.ts` | `/api/cluster`, `/api/workloads` |
+| `logs.ts`, `events.ts` | `/api/logs`, `/api/events` |
+| `networks.ts`, `account.ts` | `/api/networks`, `/api/account` |
+
+Авторизация: Bearer access token из Keycloak (`Authorization` в [`api/client.ts`](src/api/client.ts)).
+
+## Внешние ссылки
+
+Компонент [`ExternalLinks.vue`](src/components/ExternalLinks.vue) показывает только **Keycloak** (`VITE_KEYCLOAK_URL`). Grafana/Superset в текущей версии не подключены.
+
+## Связанная документация
+
+- [Корневой README](../README.md) — деплой, URL, Keycloak
+- [API tests](../server/api/tests/README.md)
+- [E2E](../e2e/README.md)
