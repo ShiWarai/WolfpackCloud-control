@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useRobotsStore } from '@/stores'
 import DefaultLayout from '@/layouts/DefaultLayout.vue'
@@ -27,7 +27,14 @@ const showDeleteConfirm = ref(false)
 const { entries: logEntries, reset: resetLogsState, merge: mergeLogEntries } =
   useRosLogBuffer(150)
 const logsInitialLoading = ref(false)
-let logsRefreshInFlight: Promise<void> | null = null
+const logsRefreshInFlight = ref<Promise<void> | null>(null)
+/** Инвалидируется при unmount / смене робота — игнорируем устаревшие fetch. */
+let logsFetchSession = 0
+
+function invalidateLogsFetch() {
+  logsFetchSession += 1
+  logsRefreshInFlight.value = null
+}
 
 function formatLogLine(e: RosLogEntry): string {
   return `[${e.recorded_at}] ${e.level ?? ''} ${e.ros_node_name ?? ''}: ${e.message}`
@@ -55,32 +62,45 @@ async function loadNetworks() {
 
 async function refreshLogs(initial = false) {
   if (!robot.value || activeTab.value !== 'logs') return
-  if (logsRefreshInFlight) {
+
+  const session = logsFetchSession
+  const inFlight = logsRefreshInFlight.value
+  if (inFlight) {
     if (!initial) return
-    await logsRefreshInFlight
+    await inFlight
+    if (session !== logsFetchSession) return
   }
 
   const run = async () => {
+    if (session !== logsFetchSession) return
     if (initial) {
       resetLogsState()
       logsInitialLoading.value = true
     }
     try {
+      if (session !== logsFetchSession) return
       const nid = robot.value!.network_id ?? undefined
       const incoming = await logsApi.list(nid, LOGS_MAX_LINES)
+      if (session !== logsFetchSession) return
       mergeLogEntries(incoming)
     } catch {
+      if (session !== logsFetchSession) return
       if (initial) resetLogsState()
     } finally {
-      if (initial) logsInitialLoading.value = false
+      if (session === logsFetchSession && initial) {
+        logsInitialLoading.value = false
+      }
     }
   }
 
-  logsRefreshInFlight = run()
+  const promise = run()
+  logsRefreshInFlight.value = promise
   try {
-    await logsRefreshInFlight
+    await promise
   } finally {
-    logsRefreshInFlight = null
+    if (logsRefreshInFlight.value === promise) {
+      logsRefreshInFlight.value = null
+    }
   }
 }
 
@@ -93,6 +113,7 @@ const logsPoll = useIntervalPoll({
 })
 
 watch(robotId, () => {
+  invalidateLogsFetch()
   resetLogsState()
   if (activeTab.value === 'logs') void logsPoll.triggerNow(true)
 })
@@ -100,6 +121,7 @@ watch(robotId, () => {
 watch(
   () => robot.value?.network_id,
   () => {
+    invalidateLogsFetch()
     resetLogsState()
     if (activeTab.value === 'logs') void logsPoll.triggerNow(true)
   }
@@ -171,6 +193,10 @@ onMounted(() => {
     robotsStore.fetchRobot(robotId.value),
     loadNetworks(),
   ])
+})
+
+onUnmounted(() => {
+  invalidateLogsFetch()
 })
 </script>
 

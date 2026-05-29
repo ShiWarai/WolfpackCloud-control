@@ -77,11 +77,23 @@ export function useOrchestrationTasks(ctx: OrchestrationTasksContext) {
           next.delete(deployment)
           continue
         }
+      } else {
+        // Deployment исчез из API — перенос больше не отслеживаем.
+        next.delete(deployment)
+        continue
       }
 
       const pods = podsMatchingDeployment(deployment)
+      if (pods.length === 0) {
+        const want = dep?.replicas ?? 0
+        // Остановлен (0 реплик) или поды ещё не появились после scale-to-zero.
+        if (want === 0) {
+          next.delete(deployment)
+        }
+        continue
+      }
+
       if (
-        pods.length > 0 &&
         pods.every(
           (p) =>
             p.nodeName === watch.targetNode &&
@@ -144,14 +156,15 @@ export function useOrchestrationTasks(ctx: OrchestrationTasksContext) {
           })
           migrationWatches.value = next
           ctx.onSuccess(`Перенос запущен: «${deployment}» → ${targetNode}`)
-          await ctx.onTaskComplete()
+          try {
+            await ctx.onTaskComplete()
+          } catch {
+            // Refresh не удался — migration watch остаётся активным.
+          }
         },
         { kind: 'migrate', deployment, targetNode },
       )
     } catch (err: unknown) {
-      const next = new Map(migrationWatches.value)
-      next.delete(deployment)
-      migrationWatches.value = next
       ctx.onError(formatApiError(err, 'Ошибка миграции'))
     }
   }
@@ -165,7 +178,11 @@ export function useOrchestrationTasks(ctx: OrchestrationTasksContext) {
         async () => {
           await clusterApi.stopDeployment(deployment)
           ctx.onSuccess(`Остановлен деплоймент «${deployment}»`)
-          await ctx.onTaskComplete()
+          try {
+            await ctx.onTaskComplete()
+          } catch {
+            // Refresh не удался — UI догонит следующим poll.
+          }
         },
         { kind: 'stop', deployment },
       )
