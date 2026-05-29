@@ -117,7 +117,7 @@ spec:
       volumes:
         - name: realm-import
           configMap:
-            name: keycloak-realm-wolfpack-control
+            name: keycloak-realm-import
       containers:
         - name: keycloak
           image: quay.io/keycloak/keycloak:26.0

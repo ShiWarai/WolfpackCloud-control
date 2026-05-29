@@ -19,19 +19,30 @@ USER_ENV = "KEYCLOAK_TEST_USER"
 PASS_ENV = "KEYCLOAK_TEST_PASSWORD"
 
 
+def _env_credential(*names: str) -> str:
+    for name in names:
+        value = (os.environ.get(name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
 def main() -> int:
     if os.environ.get(SKIP_ENV):
         print(f"{SKIP_ENV} set — skipping E2E.")
         return 0
 
-    base = (os.environ.get(BASE_ENV) or "").strip().rstrip("/")
-    user = (os.environ.get(USER_ENV) or "").strip()
-    password = (os.environ.get(PASS_ENV) or "").strip()
+    base = _env_credential(BASE_ENV, "WPC_STAGING_UI_BASE_URL").rstrip("/")
+    user = _env_credential(USER_ENV, "KEYCLOAK_USERNAME", "LOADTEST_USERNAME")
+    password = _env_credential(PASS_ENV, "KEYCLOAK_PASSWORD", "LOADTEST_PASSWORD")
 
     if not base or not user or not password:
         print(
-            f"Missing env: need {BASE_ENV}, {USER_ENV}, {PASS_ENV} "
-            f"(or set {SKIP_ENV} to skip).",
+            f"Missing env: need {BASE_ENV} (or WPC_STAGING_UI_BASE_URL), "
+            f"{USER_ENV} (or KEYCLOAK_USERNAME / LOADTEST_USERNAME), "
+            f"{PASS_ENV} (or KEYCLOAK_PASSWORD / LOADTEST_PASSWORD); "
+            f"staging defaults: loadtest-admin from Secret loadtest-credentials. "
+            f"Or set {SKIP_ENV} to skip.",
             file=sys.stderr,
         )
         return 2

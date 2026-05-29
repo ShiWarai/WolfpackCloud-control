@@ -7,9 +7,10 @@
 #   KEYCLOAK_PASSWORD
 #
 # Опционально:
-#   KEYCLOAK_ISSUER    — по умолчанию прод-кластер из манифестов Control API
+#   KEYCLOAK_ISSUER    — по умолчанию prod realm wolfpack-control; для staging см. run-load-staging.sh
 #   KEYCLOAK_TOKEN_URL — полный URL /protocol/openid-connect/token (иначе из issuer)
 #   KEYCLOAK_CLIENT_ID — по умолчанию wolfpack-control-web
+#   ALLOW_PROD_LOADTEST — не используется здесь напрямую; prod guard в run-load.sh
 #
 # Вывод: только JWT на stdout (для export ACCESS_TOKEN="$(...)").
 set -euo pipefail

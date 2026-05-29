@@ -1,0 +1,63 @@
+{
+  "realm": "wolfpack-control-staging",
+  "enabled": true,
+  "displayName": "WolfpackCloud Control (staging / load tests)",
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "roles": {
+    "realm": [
+      {"name": "user", "description": "Staging test user"},
+      {"name": "admin", "description": "Staging test admin (orchestration load tests)"}
+    ]
+  },
+  "defaultRoles": ["user"],
+  "clients": [
+    {
+      "clientId": "wolfpack-control-web",
+      "name": "WolfpackCloud Control SPA (staging)",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": false,
+      "redirectUris": [
+        "https://staging.wolfpack.robotics-rtuitlab.ru/*",
+        "http://localhost:9200/*",
+        "http://127.0.0.1:9200/*",
+        "http://127.0.0.1:18081/*",
+        "https://oauth.pstmn.io/v1/callback",
+        "https://oauth.pstmn.io/*"
+      ],
+      "webOrigins": [
+        "https://staging.wolfpack.robotics-rtuitlab.ru",
+        "https://auth.wolfpack.robotics-rtuitlab.ru",
+        "http://127.0.0.1:18081",
+        "https://oauth.pstmn.io"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "fullScopeAllowed": true
+    },
+    {
+      "clientId": "wolfpack-control-api",
+      "name": "Control API staging (audience)",
+      "enabled": true,
+      "publicClient": false,
+      "bearerOnly": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [],
+      "webOrigins": [],
+      "fullScopeAllowed": true
+    }
+  ]
+}

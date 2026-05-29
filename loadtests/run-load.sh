@@ -19,7 +19,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# shellcheck source=guard-prod-loadtest.sh
+source "${SCRIPT_DIR}/guard-prod-loadtest.sh"
+
 export BASE_URL="${BASE_URL:?Задайте BASE_URL (хост Ingress без завершающего /)}"
+guard_prod_loadtest "$BASE_URL"
 
 # Токен: либо уже в окружении (например выставили вручную), иначе Keycloak password grant.
 if [[ -z "${ACCESS_TOKEN:-}" ]]; then

@@ -1,11 +1,37 @@
 # Нагрузочное тестирование Control API
 
+## Staging (рекомендуется)
+
+Load/e2e по умолчанию идут на **staging** namespace и realm `wolfpack-control-staging` — без prod-паролей.
+
+```bash
+cd WolfpackCloud-control/loadtests
+cp .env.staging.example .env.staging   # опционально
+# Secret loadtest-credentials + seed: deploy/k8s/staging/README.md
+./run-load-staging.sh -e VUS_MAX=25
+```
+
+`run-load-staging.sh` подставляет `BASE_URL`, `KEYCLOAK_ISSUER` staging и при наличии `kubectl` читает `loadtest-credentials` из `wolfpackcloud-control-staging`.
+
+**Production** — только явно:
+
+```bash
+export ALLOW_PROD_LOADTEST=1
+export BASE_URL=https://wolfpack.robotics-rtuitlab.ru
+export KEYCLOAK_USERNAME='…'
+export KEYCLOAK_PASSWORD='…'
+./run-load.sh
+```
+
+Без `ALLOW_PROD_LOADTEST=1` `run-load.sh` откажется, если `BASE_URL` — prod host.
+
 ## Только Control API (без подов в кластере)
 
 Нагрузка идёт с вашей машины через **k6**, в Kubernetes **ничего не деплоится**:
 
 ```bash
 cd WolfpackCloud-control/loadtests
+export ALLOW_PROD_LOADTEST=1
 export BASE_URL=https://wolfpack.robotics-rtuitlab.ru
 export KEYCLOAK_USERNAME='…'
 export KEYCLOAK_PASSWORD='…'
@@ -45,6 +71,7 @@ export FULL_LOADTEST_PEER_REPLICAS=45
 С HTTP и масштабом по умолчанию из YAML hammer:
 
 ```bash
+export ALLOW_PROD_LOADTEST=1
 export BASE_URL=https://wolfpack.robotics-rtuitlab.ru
 export KEYCLOAK_USERNAME=wolfpack-operator
 export KEYCLOAK_PASSWORD='***'
@@ -58,7 +85,7 @@ export KEYCLOAK_PASSWORD='***'
 ## Предпосылки
 
 - Установлен [k6](https://k6.io/docs/getting-started/installation/).
-- Для **сильной** нагрузки нужен пользователь realm `wolfpack-control` и включённый **Direct Access Grants** у клиента `wolfpack-control-web` (уже так в [`wolfpack-control-realm.json`](../deploy/k8s/keycloak/wolfpack-control-realm.json)).
+- Для **сильной** нагрузки нужен пользователь realm (staging: `loadtest-admin`; prod: свой operator) и включённый **Direct Access Grants** у клиента `wolfpack-control-web`.
 - Развёрнут Control API; опционально peer-поды по [`deploy/k3s/wolfpackcloud-control-peers/README.md`](../../deploy/k3s/wolfpackcloud-control-peers/README.md).
 
 ## Сценарии
@@ -79,7 +106,7 @@ export KEYCLOAK_PASSWORD='***'
 | `KEYCLOAK_USERNAME` | Логин пользователя realm (не master-admin Keycloak) |
 | `KEYCLOAK_PASSWORD` | Пароль |
 
-Опционально: `KEYCLOAK_ISSUER` (по умолчанию `https://auth.wolfpack.robotics-rtuitlab.ru/realms/wolfpack-control`), `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_TOKEN_URL`.
+Опционально: `KEYCLOAK_ISSUER` (prod по умолчанию; staging — через `run-load-staging.sh`), `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_TOKEN_URL`.
 
 Одной строкой:
 
@@ -132,6 +159,8 @@ k6 run control-api-smoke.js -e BASE_URL=http://localhost:8000
 ```
 
 ## Юнит- и интеграционные тесты API
+
+Без k8s/Keycloak — см. [`server/api/tests/README.md`](../server/api/tests/README.md).
 
 ```bash
 cd WolfpackCloud-control/server/api

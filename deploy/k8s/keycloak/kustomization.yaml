@@ -5,11 +5,12 @@ kind: Kustomization
 namespace: wolfpackcloud-auth
 
 configMapGenerator:
-  - name: keycloak-realm-wolfpack-control
+  - name: keycloak-realm-import
     options:
       disableNameSuffixHash: true
     files:
       - wolfpack-control-realm.json
+      - wolfpack-control-realm-staging.json
 
 resources:
   - namespace.yaml

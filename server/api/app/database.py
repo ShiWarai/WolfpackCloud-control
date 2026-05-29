@@ -4,11 +4,12 @@
 Использует SQLAlchemy 2.0 async API с asyncpg.
 """
 
+import os
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool, StaticPool
 
 from app.config import get_settings
 
@@ -24,13 +25,16 @@ if _sqlite:
         poolclass=StaticPool,
     )
 else:
-    engine = create_async_engine(
-        settings.async_database_url,
-        echo=settings.debug,
-        pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=10,
-    )
+    _pool_kwargs: dict = {
+        "echo": settings.debug,
+        "pool_pre_ping": True,
+    }
+    if os.environ.get("TESTING_POSTGRES"):
+        _pool_kwargs["poolclass"] = NullPool
+    else:
+        _pool_kwargs["pool_size"] = 5
+        _pool_kwargs["max_overflow"] = 10
+    engine = create_async_engine(settings.async_database_url, **_pool_kwargs)
 
 async_session_maker = async_sessionmaker(
     engine,
