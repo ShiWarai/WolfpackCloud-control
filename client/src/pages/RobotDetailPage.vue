@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useRobotsStore } from '@/stores'
 import DefaultLayout from '@/layouts/DefaultLayout.vue'
 import ExternalLinks from '@/components/ExternalLinks.vue'
+import LogScrollPanel from '@/components/LogScrollPanel.vue'
 import { logsApi } from '@/api/logs'
 import type { RosLogEntry } from '@/api/logs'
 import { networksApi, type Network } from '@/api/networks'
 import type { RobotStatus } from '@/types'
+import { useRosLogBuffer } from '@/composables/useRosLogBuffer'
+import { useIntervalPoll } from '@/composables/useIntervalPoll'
 
 const route = useRoute()
 const router = useRouter()
@@ -21,58 +24,16 @@ const editNetworkIdStr = ref('')
 const networks = ref<Network[]>([])
 const showDeleteConfirm = ref(false)
 
-const logEntries = ref<RosLogEntry[]>([])
+const { entries: logEntries, reset: resetLogsState, merge: mergeLogEntries } =
+  useRosLogBuffer(150)
 const logsInitialLoading = ref(false)
-const logContainerRef = ref<HTMLElement | null>(null)
-const knownLogIds = new Set<number>()
-const LOGS_MAX_LINES = 150
-let logsTimer: ReturnType<typeof setInterval> | null = null
+let logsRefreshInFlight: Promise<void> | null = null
 
 function formatLogLine(e: RosLogEntry): string {
   return `[${e.recorded_at}] ${e.level ?? ''} ${e.ros_node_name ?? ''}: ${e.message}`
 }
 
-function resetLogsState() {
-  logEntries.value = []
-  knownLogIds.clear()
-}
-
-function sortLogEntries(entries: RosLogEntry[]): RosLogEntry[] {
-  return [...entries].sort((a, b) => {
-    const ta = new Date(a.recorded_at).getTime()
-    const tb = new Date(b.recorded_at).getTime()
-    if (ta !== tb) return ta - tb
-    return a.id - b.id
-  })
-}
-
-function mergeLogEntries(incoming: RosLogEntry[]): boolean {
-  const added: RosLogEntry[] = []
-  for (const entry of sortLogEntries(incoming)) {
-    if (knownLogIds.has(entry.id)) continue
-    knownLogIds.add(entry.id)
-    added.push(entry)
-  }
-  if (!added.length) return false
-
-  logEntries.value = [...logEntries.value, ...added]
-  if (logEntries.value.length > LOGS_MAX_LINES) {
-    const dropped = logEntries.value.splice(0, logEntries.value.length - LOGS_MAX_LINES)
-    for (const entry of dropped) knownLogIds.delete(entry.id)
-  }
-  return true
-}
-
-async function scrollLogsToBottomIfPinned() {
-  await nextTick()
-  const el = logContainerRef.value
-  if (!el) return
-  const pinThreshold = 48
-  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < pinThreshold
-  if (atBottom || logsInitialLoading.value) {
-    el.scrollTop = el.scrollHeight
-  }
-}
+const LOGS_MAX_LINES = 150
 
 const robot = computed(() => robotsStore.currentRobot)
 const robotId = computed(() => Number(route.params.id))
@@ -94,52 +55,53 @@ async function loadNetworks() {
 
 async function refreshLogs(initial = false) {
   if (!robot.value || activeTab.value !== 'logs') return
-  if (initial) {
-    resetLogsState()
-    logsInitialLoading.value = true
+  if (logsRefreshInFlight) {
+    if (!initial) return
+    await logsRefreshInFlight
   }
+
+  const run = async () => {
+    if (initial) {
+      resetLogsState()
+      logsInitialLoading.value = true
+    }
+    try {
+      const nid = robot.value!.network_id ?? undefined
+      const incoming = await logsApi.list(nid, LOGS_MAX_LINES)
+      mergeLogEntries(incoming)
+    } catch {
+      if (initial) resetLogsState()
+    } finally {
+      if (initial) logsInitialLoading.value = false
+    }
+  }
+
+  logsRefreshInFlight = run()
   try {
-    const nid = robot.value.network_id ?? undefined
-    const incoming = await logsApi.list(nid, LOGS_MAX_LINES)
-    const hadNew = mergeLogEntries(incoming)
-    if (hadNew) await scrollLogsToBottomIfPinned()
-  } catch {
-    if (initial) resetLogsState()
+    await logsRefreshInFlight
   } finally {
-    if (initial) logsInitialLoading.value = false
+    logsRefreshInFlight = null
   }
 }
 
-function startLogsPolling() {
-  stopLogsPolling()
-  void refreshLogs(true)
-  logsTimer = setInterval(() => {
-    void refreshLogs(false)
-  }, 4000)
-}
-
-function stopLogsPolling() {
-  if (logsTimer) {
-    clearInterval(logsTimer)
-    logsTimer = null
-  }
-}
-
-watch(activeTab, (t) => {
-  if (t === 'logs') startLogsPolling()
-  else stopLogsPolling()
+const logsPoll = useIntervalPoll({
+  intervalMs: 4000,
+  enabled: () => activeTab.value === 'logs',
+  enabledDebounceMs: 150,
+  fetch: (initial) => refreshLogs(initial),
+  pauseWhenHidden: true,
 })
 
 watch(robotId, () => {
   resetLogsState()
-  if (activeTab.value === 'logs') void refreshLogs(true)
+  if (activeTab.value === 'logs') void logsPoll.triggerNow(true)
 })
 
 watch(
   () => robot.value?.network_id,
   () => {
     resetLogsState()
-    if (activeTab.value === 'logs') void refreshLogs(true)
+    if (activeTab.value === 'logs') void logsPoll.triggerNow(true)
   }
 )
 
@@ -209,10 +171,6 @@ onMounted(() => {
     robotsStore.fetchRobot(robotId.value),
     loadNetworks(),
   ])
-})
-
-onUnmounted(() => {
-  stopLogsPolling()
 })
 </script>
 
@@ -384,36 +342,22 @@ onUnmounted(() => {
           </div>
           
           <div v-show="activeTab === 'logs'" class="term-robot-panel term-active">
-            <div class="term-card term-log-card">
-              <h2 class="term-log-title">
-                Логи ROS (/rosout)
-                <span
-                  class="robot-log-hint"
-                  title="Из rosout-bridge для выбранной сети (привязка робота к ROS_DOMAIN_ID). Обновление каждые ~4 с."
-                >?</span>
-              </h2>
-              <div ref="logContainerRef" class="term-log-viewport">
-                <div
-                  v-if="logsInitialLoading && !logEntries.length"
-                  class="term-text-dim term-log-placeholder"
-                >
-                  Загрузка...
-                </div>
-                <div
-                  v-else-if="!logEntries.length"
-                  class="term-text-dim term-log-placeholder"
-                >
-                  Нет записей (или rosout-bridge не запущен / нет network_id у робота).
-                </div>
-                <div
-                  v-for="entry in logEntries"
-                  :key="entry.id"
-                  class="term-log-line"
-                >
-                  {{ formatLogLine(entry) }}
-                </div>
+            <LogScrollPanel
+              title="Логи ROS (/rosout)"
+              hint="Из rosout-bridge для выбранной сети (привязка робота к ROS_DOMAIN_ID). Обновление каждые ~4 с."
+              :loading="logsInitialLoading"
+              :empty="!logEntries.length"
+              empty-text="Нет записей (или rosout-bridge не запущен / нет network_id у робота)."
+              :scroll-trigger="logEntries.length"
+            >
+              <div
+                v-for="entry in logEntries"
+                :key="entry.id"
+                class="log-scroll-panel__line"
+              >
+                {{ formatLogLine(entry) }}
               </div>
-            </div>
+            </LogScrollPanel>
           </div>
         </div>
       </div>
@@ -443,65 +387,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.term-log-card {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.term-log-title {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  margin-bottom: 0.75rem;
-}
-
-.robot-log-hint {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 0.95rem;
-  height: 0.95rem;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  font-size: 0.625rem;
-  line-height: 1;
-  color: var(--text-dim);
-  cursor: help;
-  flex-shrink: 0;
-}
-
-.robot-log-hint:hover {
-  color: var(--accent, #fb923c);
-  border-color: rgba(251, 146, 60, 0.55);
-}
-
-.term-log-viewport {
-  height: min(28rem, calc(100vh - 14rem));
-  min-height: 12rem;
-  overflow: auto;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  padding: 0.75rem 1rem;
-  font-size: var(--fs-xs);
-  line-height: 1.45;
-  color: var(--text-dim);
-}
-
-.term-log-line {
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-.term-log-line + .term-log-line {
-  margin-top: 0.15rem;
-}
-
-.term-log-placeholder {
-  font-size: var(--fs-xs);
-}
-
 .term-token-spoiler {
   margin-top: 1rem;
 }

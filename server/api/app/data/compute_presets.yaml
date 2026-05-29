@@ -34,3 +34,4 @@ presets:
     robot_name: demo-robot-k8s
     memory_request_mib: 128
     cpu_request_millicores: 50
+    privileged: true

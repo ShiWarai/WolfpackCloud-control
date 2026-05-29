@@ -72,4 +72,13 @@ def test_normalize_incluster_bearer_auth_already_prefixed():
     cfg.api_key_prefix = {"BearerToken": "Bearer"}
     normalize_incluster_bearer_auth(cfg)
     assert cfg.api_key == {"BearerToken": "plain-token"}
-    assert cfg.api_key_prefix == {"BearerToken": "Bearer"}
+    assert cfg.api_key_prefix == {}
+
+
+def test_normalize_incluster_bearer_auth_bearer_token_with_bearer_prefix():
+    """kubernetes 36 in-cluster: BearerToken уже 'bearer <jwt>' — strip, prefix пустой."""
+    cfg = client.Configuration()
+    cfg.api_key = {"BearerToken": "bearer eyJ.test"}
+    normalize_incluster_bearer_auth(cfg)
+    assert cfg.api_key == {"BearerToken": "eyJ.test"}
+    assert cfg.api_key_prefix == {}

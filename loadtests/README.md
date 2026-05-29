@@ -23,7 +23,7 @@ FULL_LOADTEST_HTTP_ONLY=1 ./full-loadtest-cycle.sh -e VUS_MAX=10
 1. `kubectl apply -k deploy/k3s/zenoh/` (можно `FULL_LOADTEST_SKIP_ZENOH=1`)
 2. Опционально `FULL_LOADTEST_SCALE_GAMMA_ZERO=1` — **gamma → 0**
 3. `kubectl apply -k loadtests/k8s-zenoh-peers-loadtest/` — hammer **alpha↔beta**
-4. **`kubectl delete pods`** для всех peer-подов на нодах **`sber`**, **`alphie-phone-1`** (`FULL_LOADTEST_PURGE_NODES`, можно `FULL_LOADTEST_SKIP_PURGE=1`)
+4. **`kubectl delete pods`** для peer-подов на нодах с **`wolfpack.io/role=dev`** (можно `FULL_LOADTEST_SKIP_PURGE=1`)
 5. Сразу **k6** (`./run-load.sh`) в **фоне** — параллельно **rollout** alpha/beta (реально одновременно HTTP и подъём ROS/Zenoh)
 6. **Soak** (по умолчанию 90 с), k6 обычно всё ещё работает
 7. **Ожидание конца k6**

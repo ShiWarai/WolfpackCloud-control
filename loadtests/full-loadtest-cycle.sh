@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Полный цикл нагрузочного теста:
 #   1) Zenoh (kustomize)
-#   2) Peer hammer + очистка peer-подов на запрещённых нодах (Сбер, телефон, …)
+#   2) Peer hammer + очистка peer-подов на нодах wolfpack.io/role=dev
 #   3) Сразу в фоне: k6 (HTTP), если есть JWT — параллельно с rollout peers
 #   4) rollout alpha/beta
 #   5) soak (k6 обычно ещё идёт)
@@ -17,8 +17,7 @@
 #   FULL_LOADTEST_SOAK_SEC=25           — пауза после rollout пока идёт k6 (по умолчанию 25)
 #   FULL_LOADTEST_ROLLOUT_TIMEOUT=600
 #   FULL_LOADTEST_SCALE_GAMMA_ZERO=1   — до старта hammer выставить gamma в 0
-#   FULL_LOADTEST_SKIP_PURGE=1        — не удалять поды на запрещённых нодах
-#   FULL_LOADTEST_PURGE_NODES="sber alphie-phone-1" — hostname(s), пробел-разделитель
+#   FULL_LOADTEST_SKIP_PURGE=1        — не удалять peer-поды на нодах role=dev
 #   FULL_LOADTEST_HTTP_ONLY=1 — только k6 на Control API (./run-load.sh), без kubectl и без подов Zenoh/peers
 #
 set -euo pipefail
@@ -33,7 +32,8 @@ PEERS_HAMMER_K="$SCRIPT_DIR/k8s-zenoh-peers-loadtest"
 
 SOAK_SEC="${FULL_LOADTEST_SOAK_SEC:-25}"
 ROLL_TIMEOUT="${FULL_LOADTEST_ROLLOUT_TIMEOUT:-600}"
-PURGE_NODES="${FULL_LOADTEST_PURGE_NODES:-sber alphie-phone-1}"
+DEV_ROLE_LABEL="${FULL_LOADTEST_DEV_ROLE_LABEL:-wolfpack.io/role}"
+DEV_ROLE_VALUE="${FULL_LOADTEST_DEV_ROLE_VALUE:-dev}"
 
 K6_PID=""
 stop_k6_on_signal() {
@@ -59,21 +59,21 @@ phase() {
   echo "=== $* ==="
 }
 
-# Удаляет peer-поды на указанных нодах (после смены affinity они пересоздадутся не там).
-purge_peer_pods_on_forbidden_nodes() {
+# Удаляет peer-поды на нодах с role=dev (после affinity NotIn dev они не должны туда садиться).
+purge_peer_pods_on_dev_nodes() {
   if [[ "${FULL_LOADTEST_SKIP_PURGE:-}" == "1" ]]; then
     phase "Пропуск purge (FULL_LOADTEST_SKIP_PURGE=1)"
     return 0
   fi
-  phase "Purge peer-подов на нодах: ${PURGE_NODES}"
+  phase "Purge peer-подов на нодах ${DEV_ROLE_LABEL}=${DEV_ROLE_VALUE}"
   local nod
-  for nod in ${PURGE_NODES}; do
+  while IFS= read -r nod; do
     [[ -z "${nod}" ]] && continue
     kubectl delete pods -n "${NS}" \
       -l app.kubernetes.io/component=wolfpackcloud-compute-instance-peer \
       --field-selector="spec.nodeName=${nod}" \
       --wait=false 2>/dev/null || true
-  done
+  done < <(kubectl get nodes -l "${DEV_ROLE_LABEL}=${DEV_ROLE_VALUE}" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
 }
 
 if [[ "${FULL_LOADTEST_HTTP_ONLY:-}" == "1" ]]; then
@@ -113,7 +113,7 @@ if [[ -n "${FULL_LOADTEST_PEER_REPLICAS:-}" ]]; then
     --replicas="${FULL_LOADTEST_PEER_REPLICAS}"
 fi
 
-purge_peer_pods_on_forbidden_nodes
+purge_peer_pods_on_dev_nodes
 
 HTTP_RAN=0
 HTTP_SKIP_REASON=""
@@ -170,7 +170,7 @@ if [[ "${FULL_LOADTEST_SKIP_RESTORE:-}" == "1" ]]; then
 else
   phase "Восстановление базового деплоя peers ($PEERS_BASE_K)"
   kubectl apply -k "$PEERS_BASE_K"
-  purge_peer_pods_on_forbidden_nodes
+  purge_peer_pods_on_dev_nodes
   kubectl -n "$NS" rollout status deployment/compute-peer-alpha --timeout="${ROLL_TIMEOUT}s" || true
   kubectl -n "$NS" rollout status deployment/compute-peer-beta --timeout="${ROLL_TIMEOUT}s" || true
   kubectl -n "$NS" rollout status deployment/compute-peer-gamma --timeout="${ROLL_TIMEOUT}s" || true
@@ -184,6 +184,6 @@ if [[ "${HTTP_RAN}" == "0" ]]; then
   echo "  Причина без k6: ${HTTP_SKIP_REASON:-неизвестно}"
   echo "  Чтобы увидеть таблицу метрик k6: export BASE_URL KEYCLOAK_USERNAME KEYCLOAK_PASSWORD и без FULL_LOADTEST_SKIP_HTTP."
 fi
-echo "  soak: ${SOAK_SEC}s | purge nodes: ${PURGE_NODES} | ns: ${NS}"
+echo "  soak: ${SOAK_SEC}s | purge dev role: ${DEV_ROLE_LABEL}=${DEV_ROLE_VALUE} | ns: ${NS}"
 echo "  ROS/Zenoh: смотрите логи подов compute-peer-* и zenoh-router (kubectl logs)."
 echo "--------------------------------"

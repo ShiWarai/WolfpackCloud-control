@@ -28,6 +28,7 @@ from kubernetes.client import (
     V1PodSpec,
     V1PodTemplateSpec,
     V1ResourceRequirements,
+    V1SecurityContext,
     V1Volume,
     V1VolumeMount,
 )
@@ -43,21 +44,33 @@ SAFE_NAME = re.compile(r"[^a-z0-9-]+")
 _k8s_configured = False
 
 
+def _strip_bearer_prefix(value: str) -> str:
+    v = value.strip()
+    if v.lower().startswith("bearer "):
+        return v.split(" ", 1)[1].strip()
+    return v
+
+
 def normalize_incluster_bearer_auth(cfg: client.Configuration) -> None:
     """kubernetes>=36: auth_settings() читает только api_key['BearerToken'], не authorization."""
     raw = cfg.api_key or {}
     bearer_token = raw.get("BearerToken")
     auth = raw.get("authorization", "")
     token: str | None = None
+    use_bearer_prefix = False
     if isinstance(bearer_token, str) and bearer_token.strip():
-        token = bearer_token.strip()
-    elif isinstance(auth, str) and auth.lower().startswith("bearer "):
-        token = auth.split(" ", 1)[1].strip()
+        token = _strip_bearer_prefix(bearer_token)
     elif isinstance(auth, str) and auth.strip():
-        token = auth.strip()
+        token = (
+            auth.split(" ", 1)[1].strip()
+            if auth.lower().startswith("bearer ")
+            else auth.strip()
+        )
+        use_bearer_prefix = True
     if token:
         cfg.api_key = {"BearerToken": token}
-        cfg.api_key_prefix = {"BearerToken": "Bearer"}
+        # In-cluster (client 36): BearerToken is "bearer <jwt>", prefix must stay empty.
+        cfg.api_key_prefix = {"BearerToken": "Bearer"} if use_bearer_prefix else {}
 
 
 def _configure_k8s() -> None:
@@ -322,12 +335,23 @@ def _deployment_uses_managed_peer_image(settings: Settings, image: str | None) -
     }
 
 
+def _deployment_uses_managed_robot_agent_image(settings: Settings, image: str | None) -> bool:
+    """Образ robot-agent из настроек Control (amd64/arm64 swap при смене ноды)."""
+    i = (image or "").strip()
+    if not i:
+        return False
+    return i in {
+        settings.control_robot_agent_image_amd64.strip(),
+        settings.control_robot_agent_image_arm64.strip(),
+    }
+
+
 def patch_deployment_node_selector(
     settings: Settings,
     deployment_name: str,
     node_hostname: str | None,
 ) -> None:
-    """Задать nodeSelector kubernetes.io/hostname; для peer с образами Control — подобрать image под архитектуру ноды."""
+    """Задать nodeSelector kubernetes.io/hostname; для peer/robot-agent с образами Control — подобрать image под архитектуру ноды."""
     _configure_k8s()
     apps = client.AppsV1Api()
     if not node_hostname:
@@ -341,34 +365,72 @@ def patch_deployment_node_selector(
 
     arch = node_architecture_by_hostname(settings, node_hostname)
 
-    template_spec: dict[str, Any] = {
-        "nodeSelector": {"kubernetes.io/hostname": node_hostname},
-    }
+    node_selector: dict[str, str] = {"kubernetes.io/hostname": node_hostname}
+    if arch:
+        node_selector["kubernetes.io/arch"] = arch
+
+    patch_ops: list[dict[str, Any]] = [
+        {"op": "replace", "path": "/spec/template/spec/nodeSelector", "value": node_selector},
+    ]
 
     if arch:
         dep = apps.read_namespaced_deployment(deployment_name, settings.k8s_namespace)
         tpl = dep.spec.template
         if tpl and tpl.spec and tpl.spec.containers:
-            for c in tpl.spec.containers:
+            for idx, c in enumerate(tpl.spec.containers):
                 if c.name == "peer" and _deployment_uses_managed_peer_image(settings, c.image):
                     try:
                         new_image = arch_to_image(settings, arch)
                     except ValueError:
                         break
-                    template_spec["containers"] = [
+                    patch_ops.append(
                         {
-                            "name": "peer",
-                            "image": new_image,
-                            "imagePullPolicy": "Always",
+                            "op": "replace",
+                            "path": f"/spec/template/spec/containers/{idx}/image",
+                            "value": new_image,
                         }
-                    ]
+                    )
+                    patch_ops.append(
+                        {
+                            "op": "replace",
+                            "path": f"/spec/template/spec/containers/{idx}/imagePullPolicy",
+                            "value": "Always",
+                        }
+                    )
+                    break
+                if c.name == "agent" and _deployment_uses_managed_robot_agent_image(
+                    settings, c.image
+                ):
+                    try:
+                        new_image = _image_ref_for_arch(
+                            settings,
+                            arch,
+                            settings.control_robot_agent_image_amd64,
+                            settings.control_robot_agent_image_arm64,
+                        )
+                    except ValueError:
+                        break
+                    patch_ops.append(
+                        {
+                            "op": "replace",
+                            "path": f"/spec/template/spec/containers/{idx}/image",
+                            "value": new_image,
+                        }
+                    )
+                    patch_ops.append(
+                        {
+                            "op": "replace",
+                            "path": f"/spec/template/spec/containers/{idx}/imagePullPolicy",
+                            "value": "Always",
+                        }
+                    )
                     break
 
-    body = {"spec": {"template": {"spec": template_spec}}}
     apps.patch_namespaced_deployment(
         deployment_name,
         settings.k8s_namespace,
-        body,
+        patch_ops,
+        _content_type="application/json-patch+json",
     )
 
 
@@ -481,6 +543,12 @@ def build_preset_peer_deployment(
         "app.kubernetes.io/component": "wolfpackcloud-compute-instance-peer",
     }
     node_selector = {"kubernetes.io/hostname": node_hostname}
+    try:
+        arch = node_architecture_by_hostname(settings, node_hostname)
+        if arch:
+            node_selector["kubernetes.io/arch"] = arch
+    except ValueError:
+        pass
 
     container = V1Container(
         name="peer",
@@ -551,27 +619,30 @@ def launch_preset_peer(
         )
         apps.create_namespaced_deployment(settings.k8s_namespace, dep)
 
-    body: dict[str, Any] = {
-        "spec": {
-            "replicas": 1,
-            "template": {
-                "spec": {
-                    "nodeSelector": {"kubernetes.io/hostname": node_hostname},
-                    "containers": [
-                        {
-                            "name": "peer",
-                            "image": image,
-                            "imagePullPolicy": "Always",
-                        }
-                    ],
-                }
-            },
-        }
-    }
+    arch = node_architecture_by_hostname(settings, node_hostname)
+    node_selector: dict[str, str] = {"kubernetes.io/hostname": node_hostname}
+    if arch:
+        node_selector["kubernetes.io/arch"] = arch
+
+    patch_ops: list[dict[str, Any]] = [
+        {"op": "replace", "path": "/spec/replicas", "value": 1},
+        {"op": "replace", "path": "/spec/template/spec/nodeSelector", "value": node_selector},
+        {
+            "op": "replace",
+            "path": "/spec/template/spec/containers/0/image",
+            "value": image,
+        },
+        {
+            "op": "replace",
+            "path": "/spec/template/spec/containers/0/imagePullPolicy",
+            "value": "Always",
+        },
+    ]
     apps.patch_namespaced_deployment(
         preset.deployment_name,
         settings.k8s_namespace,
-        body,
+        patch_ops,
+        _content_type="application/json-patch+json",
     )
 
 
@@ -590,10 +661,14 @@ def build_preset_robot_agent_deployment(
     }
     mem_mib = int(preset.memory_request_mib)
     cpu_milli = int(preset.cpu_request_millicores)
+    security_context = (
+        V1SecurityContext(privileged=True) if preset.privileged else None
+    )
     container = V1Container(
         name="agent",
         image=image,
         image_pull_policy="Always",
+        security_context=security_context,
         env=[
             V1EnvVar(
                 name="HOSTNAME",
@@ -671,17 +746,27 @@ def launch_preset_robot_agent(
         )
         apps.create_namespaced_deployment(settings.k8s_namespace, dep)
 
+    arch = node_architecture_by_hostname(settings, node_hostname)
+    node_selector: dict[str, str] = {"kubernetes.io/hostname": node_hostname}
+    if arch:
+        node_selector["kubernetes.io/arch"] = arch
+
     body: dict[str, Any] = {
         "spec": {
             "replicas": 1,
             "template": {
                 "spec": {
-                    "nodeSelector": {"kubernetes.io/hostname": node_hostname},
+                    "nodeSelector": node_selector,
                     "containers": [
                         {
                             "name": "agent",
                             "image": image,
                             "imagePullPolicy": "Always",
+                            **(
+                                {"securityContext": {"privileged": True}}
+                                if preset.privileged
+                                else {}
+                            ),
                         }
                     ],
                 }

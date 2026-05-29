@@ -120,7 +120,6 @@ def test_auto_argmax_higher_spare_wins(settings: Settings) -> None:
 
 def test_auto_tie_break_latency_then_name(settings: Settings) -> None:
     o = ComputeOrchestrator()
-    # Две ноды с одинаковым spare → одинаковый f; меньшая latency, затем имя
     nodes = [
         _node("zebra", latency_ms=5),
         _node("alpha", latency_ms=10),
@@ -175,31 +174,31 @@ def test_select_node_requires_explicit_mode() -> None:
         orch.select_node([_node("a")])
 
 
-def test_static_f1_rejects_auto_orchestration_blocked(settings: Settings) -> None:
+def test_auto_includes_dev_role_node(settings: Settings) -> None:
     o = ComputeOrchestrator()
-    node = _node(
-        "sber",
-        labels={"wolfpack.io/auto-orchestration": "blocked"},
-    )
+    node = _node("wsl2-test", labels={"wolfpack.io/role": "dev"})
     ok, reason = o._static_f1_check(node, settings, _preset())
-    assert ok is False
-    assert reason == "auto_orchestration_blocked"
+    assert ok is True
+    assert reason is None
+    picked = o._select_node_auto([node], settings, _preset())
+    assert picked == "wsl2-test"
 
 
-def test_auto_skips_blocked_node(settings: Settings) -> None:
+def test_auto_respects_explicit_role_exclude() -> None:
     o = ComputeOrchestrator()
+    s = Settings(k8s_auto_orchestration_exclude_role_values="dev")
     nodes = [
-        _node("sber", labels={"wolfpack.io/auto-orchestration": "blocked"}),
-        _node("good"),
+        _node("wsl2-test", labels={"wolfpack.io/role": "dev"}),
+        _node("good", labels={"wolfpack.io/role": "worker"}),
     ]
-    picked = o._select_node_auto(nodes, settings, _preset())
+    picked = o._select_node_auto(nodes, s, _preset())
     assert picked == "good"
 
 
-def test_manual_launch_on_blocked_node_allowed(settings: Settings) -> None:
+def test_manual_launch_on_dev_role_allowed(settings: Settings) -> None:
     orch = ComputeOrchestrator()
-    node = _node("sber", labels={"wolfpack.io/auto-orchestration": "blocked"})
-    assert orch.select_node([node], manual_hostname="sber") == "sber"
+    node = _node("wsl2-test", labels={"wolfpack.io/role": "dev"})
+    assert orch.select_node([node], manual_hostname="wsl2-test") == "wsl2-test"
 
 
 def test_evaluate_auto_trace_shape(settings: Settings) -> None:
@@ -217,12 +216,13 @@ def test_evaluate_auto_trace_shape(settings: Settings) -> None:
     assert selected[0].name == trace.chosen
 
 
-def test_evaluate_auto_trace_blocked_reason(settings: Settings) -> None:
+def test_evaluate_auto_trace_excluded_role_reason() -> None:
     o = ComputeOrchestrator()
+    s = Settings(k8s_auto_orchestration_exclude_role_values="dev")
     trace = o._evaluate_auto(
-        [_node("sber", labels={"wolfpack.io/auto-orchestration": "blocked"})],
-        settings,
+        [_node("wsl2-test", labels={"wolfpack.io/role": "dev"})],
+        s,
         _preset(),
     )
     assert trace.error is not None
-    assert trace.nodes[0].f1_reason == "auto_orchestration_blocked"
+    assert trace.nodes[0].f1_reason == "excluded_role"

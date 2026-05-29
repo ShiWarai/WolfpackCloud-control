@@ -1,4 +1,4 @@
-# Hammer: только arm64; не на sber и не на alphie-phone.
+# Hammer: только arm64; не на нодах с wolfpack.io/role=dev.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -33,11 +33,10 @@ spec:
                     operator: In
                     values:
                       - arm64
-                  - key: kubernetes.io/hostname
+                  - key: wolfpack.io/role
                     operator: NotIn
                     values:
-                      - sber
-                      - alphie-phone-1
+                      - dev
       containers:
         - name: peer
           image: 10.43.50.10:5000/wolfpackcloud-compute-instance-peer:humble-arm64

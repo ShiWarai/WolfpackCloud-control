@@ -10,7 +10,7 @@
 |---|------|------|
 | Реплики alpha / beta | 1 | **40** (YAML или `kubectl scale`, можно **50+**) |
 | `peer_shard` | 1 и 2 | **0** → shard из hostname пода |
-| Нода | `hostname` в базе | **только `arm64`**, не **`sber`** и не **`alphie-phone-1`** (`nodeAffinity`) |
+| Нода | `hostname` в базе | **только `arm64`**, не **`wolfpack.io/role=dev`** (`nodeAffinity`) |
 | Образ alpha/beta | amd64 / arm64 | оба **`humble-arm64`** |
 | Стратегия | Recreate | RollingUpdate |
 | Запросы ресурсов | выше | **100m / 128Mi** для упаковки |
@@ -34,8 +34,8 @@ kubectl -n wolfpackcloud-zenoh scale deployment/compute-peer-alpha deployment/co
 kubectl apply -k deploy/k3s/wolfpackcloud-control-peers/
 ```
 
-## Имена нод
+## Ноды
 
-Исключения по **`kubernetes.io/hostname`** (`NotIn`): **`sber`**, **`alphie-phone-1`**. Другой hostname — поправьте **`values`** в обоих `deployment-peer-*.yaml`.
+Исключение: **`wolfpack.io/role` `NotIn` `dev`** (как авто-оркестрация в Control). Другие роли — поправьте affinity в `deployment-peer-*.yaml`.
 
 Только **arm64** и образ **`humble-arm64`** для alpha и beta.

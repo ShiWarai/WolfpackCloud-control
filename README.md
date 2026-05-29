@@ -30,7 +30,7 @@ cd client && npm ci && npm run dev
 
 ### Сборка образов в cluster registry (BuildKit)
 
-Выполняйте из **корня монорепозитория** WolfpackCloud-kubernetes — один общий скрипт **[`scripts/build-with-buildkit.sh`](../scripts/build-with-buildkit.sh)** (BuildKit в namespace `wolfpack-build`, push в **`10.43.50.10:5000`**).
+Выполняйте из **корня монорепозитория** WolfpackCloud-kubernetes — один общий скрипт **[`scripts/build-with-buildkit.sh`](../scripts/build-with-buildkit.sh)** (BuildKit в namespace `wolfpackcloud-build`, push в **`10.43.50.10:5000`**).
 
 ```bash
 # Манифесты по умолчанию тянут образы **:latest-arm64** и ставят поды только на ноды **kubernetes.io/arch=arm64**.

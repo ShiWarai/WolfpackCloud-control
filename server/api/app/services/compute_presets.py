@@ -30,6 +30,8 @@ class ComputePreset:
     #: Запрос CPU задачи T (millicores), как в Deployment requests.cpu (100m → 100)
     cpu_request_millicores: int
     robot_name: str = "demo-robot-k8s"
+    #: privileged pod (доступ к /dev хоста для Telegraf diskio и т.п.)
+    privileged: bool = False
 
 
 def _load_raw() -> dict:
@@ -57,6 +59,7 @@ def list_compute_presets() -> list[ComputePreset]:
                     row.get("cpu_request_millicores", _DEFAULT_CPU_MILLI),
                 ),
                 robot_name=str(row.get("robot_name") or "demo-robot-k8s"),
+                privileged=bool(row.get("privileged", False)),
             )
         )
     return out

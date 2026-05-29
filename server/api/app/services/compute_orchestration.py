@@ -49,7 +49,7 @@ ORCHESTRATION_STEPS: tuple[OrchestrationStepInfo, ...] = (
     OrchestrationStepInfo(
         id="f1",
         name="Статический отсев f1",
-        formula="Ready ∧ arch∈{amd64,arm64} ∧ образ настроен ∧ auto-orchestration≠blocked",
+        formula="Ready ∧ arch∈{amd64,arm64} ∧ образ настроен ∧ role∉auto-exclude",
     ),
     OrchestrationStepInfo(
         id="q",
@@ -102,13 +102,13 @@ class OrchestrationTrace:
     error: str | None = None
 
 
-def node_auto_orchestration_blocked(n: dict[str, Any], settings: Settings) -> bool:
-    labels = n.get("labels") or {}
-    key = (settings.k8s_auto_orchestration_block_label or "").strip()
-    val = (settings.k8s_auto_orchestration_block_value or "").strip()
-    if not key or not val:
+def node_excluded_from_auto_orchestration(n: dict[str, Any], settings: Settings) -> bool:
+    excluded = settings.auto_orchestration_excluded_roles
+    if not excluded:
         return False
-    return labels.get(key) == val
+    labels = n.get("labels") or {}
+    role = (labels.get(settings.k8s_worker_role_label) or "").strip().lower()
+    return role in excluded
 
 
 class ComputeOrchestrator:
@@ -298,8 +298,8 @@ class ComputeOrchestrator:
         settings: Settings,
         preset: ComputePreset,
     ) -> tuple[bool, str | None]:
-        if node_auto_orchestration_blocked(n, settings):
-            return False, "auto_orchestration_blocked"
+        if node_excluded_from_auto_orchestration(n, settings):
+            return False, "excluded_role"
         if not n.get("ready"):
             return False, "not_ready"
         arch = str(n.get("architecture") or "").strip().lower()

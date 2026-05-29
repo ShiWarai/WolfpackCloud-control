@@ -2,69 +2,83 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 import { clusterApi } from '@/api/cluster'
-import type {
-  ClusterPod,
-  ComputePreset,
-  OrchestrationResponse,
-  OrchestrationTrace,
-  WorkerNode,
-} from '@/api/cluster'
+import type { ComputePreset, OrchestrationTrace } from '@/api/cluster'
+import OrchestrationPodChip from '@/components/orchestration/OrchestrationPodChip.vue'
+import OrchestrationTaskQueue from '@/components/orchestration/OrchestrationTaskQueue.vue'
+import { useOrchestrationData } from '@/composables/useOrchestrationData'
+import { useOrchestrationTasks } from '@/composables/useOrchestrationTasks'
+import { usePodDragDrop } from '@/composables/usePodDragDrop'
 import DefaultLayout from '@/layouts/DefaultLayout.vue'
-import { workloadsApi } from '@/api/workloads'
 import { useAuthStore } from '@/stores'
 
 const authStore = useAuthStore()
 
-/** Только первый запрос: полноэкранное «Загрузка…». Дальше данные не скрываем. */
-const initialLoading = ref(true)
-const hasLoadedOnce = ref(false)
-/** Кнопка «Обновить» и лёгкая подсветка блока. */
-const refreshing = ref(false)
-const error = ref<string | null>(null)
 const successMessage = ref<string | null>(null)
 let successClearTimer: ReturnType<typeof setTimeout> | null = null
 
-/** Только пока уходит PATCH миграции — блокируем DnD. Ожидание rolling на ноде не блокируем. */
-const migrateInFlight = ref(false)
-/** Показываем баннер и подсветку ноды, пока деплоймент не стабилизировался на целевой ноде. */
-const migratePending = ref<{
-  deployment: string
-  targetNode: string
-  startedAt: number
-} | null>(null)
+function flashSuccess(text: string) {
+  successMessage.value = text
+  if (successClearTimer) clearTimeout(successClearTimer)
+  successClearTimer = setTimeout(() => {
+    successMessage.value = null
+    successClearTimer = null
+  }, 4500)
+}
 
-let pollTimer: ReturnType<typeof setInterval> | null = null
-let pollRequestInFlight = false
+const afterLoadHook = { run: () => {} }
 
-const MIGRATE_WATCH_MAX_MS = 15 * 60 * 1000
-const NODE_HOSTNAME_SELECTOR = 'kubernetes.io/hostname'
+const {
+  initialLoading,
+  hasLoadedOnce,
+  refreshing,
+  error,
+  workerNodes,
+  podsByNode,
+  orphanPods,
+  deployments,
+  load,
+  poll,
+} = useOrchestrationData(() => afterLoadHook.run())
 
-const POLL_MS = 5000
+const orchestrationTasks = useOrchestrationTasks({
+  deployments: () => deployments.value,
+  podsByNode: () => podsByNode.value,
+  orphanPods: () => orphanPods.value,
+  onTaskComplete: async () => {
+    await load({ quiet: true })
+    await poll.triggerNow(false)
+  },
+  onError: (message) => {
+    error.value = message
+  },
+  onSuccess: flashSuccess,
+})
 
-const workerNodes = ref<WorkerNode[]>([])
-const podsByNode = ref<Record<string, ClusterPod[]>>({})
-const orphanPods = ref<ClusterPod[]>([])
-const deployments = ref<OrchestrationResponse['deployments']>([])
-const dragged = ref<{ deploymentName: string; podName: string } | null>(null)
+afterLoadHook.run = () => orchestrationTasks.tryFinishMigrationWatches()
 
-const DRAG_START_THRESHOLD_PX = 10
+const drag = usePodDragDrop({
+  workerNodes,
+  isDeploymentBusy: orchestrationTasks.isDeploymentBusy,
+  onDrop: async (dep, node) => {
+    if (!node.ready || !dep) return
+    error.value = null
+    await orchestrationTasks.enqueueMigrate(dep, node.name)
+  },
+})
 
-const dragState = ref<{
-  deploymentName: string
-  podName: string
-  pointerId: number
-  startX: number
-  startY: number
-} | null>(null)
-const dragActive = ref(false)
-const dragGhostPos = ref({ x: 0, y: 0 })
-const dragOverNode = ref<string | null>(null)
+const {
+  dragged,
+  dragActive,
+  dragGhostPos,
+  dragOverNode,
+  dragGhostLabel,
+  showDragGhost,
+  onPodPointerDown,
+  dispose: disposeDrag,
+} = drag
 
-const dragGhostLabel = computed(() => dragState.value?.deploymentName ?? '')
-const showDragGhost = computed(() => dragActive.value && !!dragState.value)
-
-const AUTO_ORCHESTRATION_BLOCK_LABEL = 'wolfpack.io/auto-orchestration'
-const AUTO_ORCHESTRATION_BLOCK_VALUE = 'blocked'
+const taskList = computed(() => orchestrationTasks.tasks.value)
+const migrationWatchList = computed(() => orchestrationTasks.activeMigrations.value)
 
 const showLaunchModal = ref(false)
 const launchInFlight = ref(false)
@@ -75,14 +89,12 @@ const showOrchestrationPanel = ref(false)
 const computePresets = ref<ComputePreset[]>([])
 const selectedPresetId = ref('')
 const selectedNodeHostname = ref('')
-const stopDeploymentInFlight = ref<string | null>(null)
 
-/** Worker и dev в одном списке; порядок: worker → dev → прочие по имени. */
 const ROLE_SORT_ORDER: Record<string, number> = { worker: 0, dev: 1 }
 
 const sortedPoolNodes = computed(() =>
   [...workerNodes.value].sort((a, b) => {
-    const rank = (n: WorkerNode) => {
+    const rank = (n: typeof a) => {
       const r = (n.labels['wolfpack.io/role'] || '').toLowerCase()
       return r in ROLE_SORT_ORDER ? ROLE_SORT_ORDER[r] : 50
     }
@@ -92,28 +104,13 @@ const sortedPoolNodes = computed(() =>
 )
 
 const showSkeleton = computed(() => initialLoading.value && !hasLoadedOnce.value)
-const interactionLocked = computed(
-  () =>
-    migrateInFlight.value ||
-    refreshing.value ||
-    launchInFlight.value ||
-    stopDeploymentInFlight.value !== null,
-)
-
-const migrateBannerVisible = computed(
-  () => migratePending.value !== null || migrateInFlight.value,
-)
 
 const launchModalWide = computed(
   () => showOrchestrationPanel.value || (autoOrchestrate.value && launchInFlight.value),
 )
 
-function isNodeAutoBlocked(n: WorkerNode): boolean {
-  return n.labels[AUTO_ORCHESTRATION_BLOCK_LABEL] === AUTO_ORCHESTRATION_BLOCK_VALUE
-}
-
 const F1_REASON_LABELS: Record<string, string> = {
-  auto_orchestration_blocked: 'заблокирована',
+  excluded_role: 'роль исключена из авто',
   not_ready: 'NotReady',
   bad_architecture: 'арх.',
   peer_image_not_configured: 'нет образа peer',
@@ -155,218 +152,14 @@ function resetLaunchTraceState() {
   launchSucceeded.value = false
 }
 
-function flashSuccess(text: string) {
-  successMessage.value = text
-  if (successClearTimer) clearTimeout(successClearTimer)
-  successClearTimer = setTimeout(() => {
-    successMessage.value = null
-    successClearTimer = null
-  }, 4500)
+function isNodeMigrationTarget(nodeName: string): boolean {
+  return orchestrationTasks.activeMigrations.value.some((m) => m.targetNode === nodeName)
 }
 
-function tryFinishMigrationWatch() {
-  const pending = migratePending.value
-  if (!pending) return
-  if (Date.now() - pending.startedAt > MIGRATE_WATCH_MAX_MS) {
-    migratePending.value = null
-    return
-  }
-  const dep = deployments.value.find((d) => d.name === pending.deployment)
-  if (dep) {
-    const sel = dep.nodeSelector || {}
-    const onTarget = sel[NODE_HOSTNAME_SELECTOR] === pending.targetNode
-    const want = dep.replicas ?? 0
-    const ready = dep.readyReplicas ?? 0
-    if (onTarget && want > 0 && ready >= want) {
-      migratePending.value = null
-      return
-    }
-  }
-  const pods = podsMatchingDeployment(pending.deployment)
-  if (
-    pods.length > 0 &&
-    pods.every(
-      (p) =>
-        p.nodeName === pending.targetNode &&
-        (p.phase === 'Running' || p.phase === 'Succeeded'),
-    )
-  ) {
-    migratePending.value = null
-  }
-}
-
-function isPodMigrating(deploymentName: string | undefined): boolean {
-  if (!deploymentName || !migratePending.value) return false
-  return migratePending.value.deployment === deploymentName
-}
-
-function podsMatchingDeployment(deploymentName: string): ClusterPod[] {
-  const out: ClusterPod[] = []
-  for (const list of Object.values(podsByNode.value)) {
-    for (const p of list) {
-      if (p.deploymentName === deploymentName) out.push(p)
-    }
-  }
-  for (const p of orphanPods.value) {
-    if (p.deploymentName === deploymentName) out.push(p)
-  }
-  return out
-}
-
-async function load(opts?: { quiet?: boolean }) {
-  const quiet = opts?.quiet === true
-  if (!quiet) error.value = null
-  if (!quiet) {
-    if (!hasLoadedOnce.value) initialLoading.value = true
-    else refreshing.value = true
-  }
-  try {
-    const data = await clusterApi.getOrchestration()
-    workerNodes.value = data.workerNodes
-    podsByNode.value = data.podsByNode
-    orphanPods.value = data.orphanPods ?? []
-    deployments.value = data.deployments ?? []
-    hasLoadedOnce.value = true
-    tryFinishMigrationWatch()
-  } catch (e: unknown) {
-    const err = e as { response?: { data?: { detail?: string } } }
-    if (!quiet) {
-      error.value = err.response?.data?.detail || 'Не удалось загрузить кластер'
-    }
-  } finally {
-    initialLoading.value = false
-    refreshing.value = false
-  }
-}
-
-async function pollOrchestrationQuiet() {
-  if (pollRequestInFlight) return
-  pollRequestInFlight = true
-  try {
-    await load({ quiet: true })
-  } finally {
-    pollRequestInFlight = false
-  }
-}
-
-function startPolling() {
-  stopPolling()
-  pollTimer = setInterval(() => {
-    void pollOrchestrationQuiet()
-  }, POLL_MS)
-}
-
-function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
-}
-
-function cleanupDragListeners() {
-  window.removeEventListener('pointermove', onWindowPointerMove)
-  window.removeEventListener('pointerup', onWindowPointerUp)
-  window.removeEventListener('pointercancel', onWindowPointerUp)
-}
-
-function resetDragState() {
-  dragState.value = null
-  dragActive.value = false
-  dragOverNode.value = null
-  dragged.value = null
-}
-
-function onWindowPointerMove(ev: PointerEvent) {
-  if (!dragState.value || ev.pointerId !== dragState.value.pointerId) return
-
-  if (!dragActive.value) {
-    const dx = ev.clientX - dragState.value.startX
-    const dy = ev.clientY - dragState.value.startY
-    if (Math.hypot(dx, dy) < DRAG_START_THRESHOLD_PX) return
-    dragActive.value = true
-    dragged.value = {
-      deploymentName: dragState.value.deploymentName,
-      podName: dragState.value.podName,
-    }
-  }
-
-  ev.preventDefault()
-  dragGhostPos.value = { x: ev.clientX, y: ev.clientY }
-
-  const under = document.elementFromPoint(ev.clientX, ev.clientY)
-  const zone = under?.closest('[data-drop-node]') as HTMLElement | null
-  const nodeName = zone?.dataset.dropNode
-  if (!nodeName) {
-    dragOverNode.value = null
-    return
-  }
-  const node = workerNodes.value.find((n) => n.name === nodeName)
-  dragOverNode.value = node?.ready ? nodeName : null
-}
-
-async function onWindowPointerUp(ev: PointerEvent) {
-  if (!dragState.value || ev.pointerId !== dragState.value.pointerId) return
-
-  cleanupDragListeners()
-
-  const dep = dragState.value.deploymentName
-  const targetNodeName = dragOverNode.value
-  const wasDragging = dragActive.value
-
-  resetDragState()
-
-  if (!wasDragging || !targetNodeName) return
-  const node = workerNodes.value.find((n) => n.name === targetNodeName)
-  if (node) await migrateDeploymentToNode(node, dep)
-}
-
-function onPodPointerDown(dep: string | undefined, pod: string, ev: PointerEvent) {
-  if (!dep || interactionLocked.value || isPodMigrating(dep)) return
-  if (ev.pointerType === 'mouse' && ev.button !== 0) return
-
-  resetDragState()
-  dragState.value = {
-    deploymentName: dep,
-    podName: pod,
-    pointerId: ev.pointerId,
-    startX: ev.clientX,
-    startY: ev.clientY,
-  }
-
-  window.addEventListener('pointermove', onWindowPointerMove, { passive: false })
-  window.addEventListener('pointerup', onWindowPointerUp)
-  window.addEventListener('pointercancel', onWindowPointerUp)
-}
-
-async function migrateDeploymentToNode(node: WorkerNode, dep: string) {
-  if (!node.ready || interactionLocked.value || !dep) return
-  migrateInFlight.value = true
-  migratePending.value = {
-    deployment: dep,
-    targetNode: node.name,
-    startedAt: Date.now(),
-  }
+function onStopDeployment(deploymentName: string | undefined) {
+  if (!deploymentName) return
   error.value = null
-  try {
-    await workloadsApi.migrateByDeploymentName(dep, node.name)
-    await load({ quiet: true })
-    flashSuccess(`Перенос запущен: «${dep}» → ${node.name}`)
-  } catch (e: unknown) {
-    migratePending.value = null
-    const err = e as { response?: { data?: { detail?: string }; status?: number } }
-    const detail = err.response?.data?.detail
-    if (err.response?.status === 403) {
-      error.value = detail || 'Недостаточно прав.'
-    } else if (err.response?.status === 404) {
-      error.value =
-        detail ||
-        'Deployment не найден в namespace или недоступен для переноса.'
-    } else {
-      error.value = detail || 'Ошибка миграции'
-    }
-  } finally {
-    migrateInFlight.value = false
-  }
+  void orchestrationTasks.enqueueStop(deploymentName)
 }
 
 async function openLaunchModal() {
@@ -442,32 +235,15 @@ async function confirmLaunch() {
   }
 }
 
-async function onStopDeployment(deploymentName: string | undefined) {
-  if (!deploymentName || interactionLocked.value) return
-  stopDeploymentInFlight.value = deploymentName
-  error.value = null
-  try {
-    await clusterApi.stopDeployment(deploymentName)
-    flashSuccess(`Остановлен деплоймент «${deploymentName}»`)
-    await load({ quiet: true })
-  } catch (e: unknown) {
-    const err = e as { response?: { data?: { detail?: string }; status?: number } }
-    error.value = err.response?.data?.detail || 'Не удалось остановить деплоймент'
-  } finally {
-    stopDeploymentInFlight.value = null
-  }
-}
-
 onMounted(async () => {
   await authStore.fetchUser()
   await load()
-  startPolling()
+  await poll.start()
 })
 
 onUnmounted(() => {
-  stopPolling()
-  cleanupDragListeners()
-  resetDragState()
+  poll.stop()
+  disposeDrag()
   if (successClearTimer) clearTimeout(successClearTimer)
 })
 </script>
@@ -483,18 +259,13 @@ onUnmounted(() => {
         >?</span>
       </div>
       <div class="orchestration-title-actions">
-        <button
-          type="button"
-          class="term-btn"
-          :disabled="interactionLocked"
-          @click="openLaunchModal()"
-        >
+        <button type="button" class="term-btn" @click="openLaunchModal()">
           Запустить
         </button>
         <button
           type="button"
           class="term-btn"
-          :disabled="interactionLocked"
+          :disabled="refreshing"
           @click="load()"
         >
           {{ refreshing ? 'Обновление…' : 'Обновить' }}
@@ -505,20 +276,11 @@ onUnmounted(() => {
     <div v-if="error" class="term-alert term-alert-error term-mb-1">{{ error }}</div>
     <div v-if="successMessage" class="term-alert term-alert-success term-mb-1">{{ successMessage }}</div>
 
-    <div
-      v-if="migrateBannerVisible && migratePending"
-      class="term-alert term-mb-1"
-      style="border-color: rgba(251, 146, 60, 0.55); background: rgba(251, 146, 60, 0.08); color: var(--accent, #fb923c)"
-    >
-      <div>
-        Перенос <strong>«{{ migratePending.deployment }}»</strong> →
-        <strong>{{ migratePending.targetNode }}</strong>
-      </div>
-      <p class="term-text-dim term-fs-2xs term-mt-1" style="margin: 0;">
-        <template v-if="migrateInFlight">Отправка запроса…</template>
-        <template v-else>Ожидание готовности деплоймента на целевой ноде.</template>
-      </p>
-    </div>
+    <OrchestrationTaskQueue
+      :tasks="taskList"
+      :migration-watches="migrationWatchList"
+      :is-migrate-running="orchestrationTasks.isMigrateRunning"
+    />
 
     <div v-if="showSkeleton" class="term-card">Загрузка...</div>
 
@@ -584,7 +346,6 @@ onUnmounted(() => {
               >
                 {{ n.name }} — {{ n.labels['wolfpack.io/role'] || '—' }} · {{ n.architecture }} ·
                 {{ n.ready ? 'Ready' : 'NotReady' }}
-                <template v-if="isNodeAutoBlocked(n)"> · авто: заблокирована</template>
               </option>
             </select>
             <div style="display: flex; gap: 0.5rem;">
@@ -687,40 +448,17 @@ onUnmounted(() => {
       >
         <h3 style="margin: 0 0 0.35rem 0; font-size: 1rem;">Поды вне пула ресурсов</h3>
         <div style="display: flex; flex-wrap: wrap; gap: 0.35rem;">
-          <div
+          <OrchestrationPodChip
             v-for="pod in orphanPods"
             :key="pod.name"
-            class="orchestration-pod-chip term-btn"
-            :class="{ 'orchestration-pod-chip--migrating': isPodMigrating(pod.deploymentName) }"
-          >
-            <span
-              class="orchestration-pod-chip__drag"
-              :class="{
-                'orchestration-pod-chip__drag--active': dragActive && dragged?.deploymentName === pod.deploymentName,
-                'orchestration-pod-chip__drag--migrating': isPodMigrating(pod.deploymentName),
-              }"
-              :title="`${pod.deploymentName || pod.name} @ ${pod.nodeName || '?'}`"
-              @pointerdown="onPodPointerDown(pod.deploymentName, pod.name, $event)"
-            >
-              <span
-                v-if="isPodMigrating(pod.deploymentName)"
-                class="orchestration-pod-chip__spinner"
-                aria-hidden="true"
-              />
-              {{ pod.deploymentName || pod.name }}
-              <span class="term-text-dim"> @{{ pod.nodeName }}</span>
-            </span>
-            <button
-              v-if="pod.deploymentName"
-              type="button"
-              class="orchestration-pod-chip__close"
-              :disabled="interactionLocked || isPodMigrating(pod.deploymentName)"
-              title="Остановить под (deployment → 0 реплик)"
-              @click.stop.prevent="onStopDeployment(pod.deploymentName)"
-            >
-              ×
-            </button>
-          </div>
+            :pod="pod"
+            :busy="orchestrationTasks.isDeploymentBusy(pod.deploymentName)"
+            :drag-active="dragActive"
+            :dragged-deployment="dragged?.deploymentName"
+            show-node-name
+            @pointerdown="onPodPointerDown(pod.deploymentName, pod.name, $event, pod.nodeName)"
+            @stop="onStopDeployment(pod.deploymentName)"
+          />
         </div>
       </div>
       <div
@@ -730,7 +468,7 @@ onUnmounted(() => {
         style="border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem;"
         :data-drop-node="node.name"
         :class="{
-          'orchestration-node-drop--active': migratePending?.targetNode === node.name,
+          'orchestration-node-drop--active': isNodeMigrationTarget(node.name),
           'orchestration-node-drop--disabled': !node.ready,
           'orchestration-node-drop--drag-over': dragOverNode === node.name,
         }"
@@ -745,39 +483,16 @@ onUnmounted(() => {
           </h3>
         </div>
         <div style="margin-top: 0.5rem; min-height: 2rem; display: flex; flex-wrap: wrap; gap: 0.35rem;">
-          <div
+          <OrchestrationPodChip
             v-for="pod in (podsByNode[node.name] || [])"
             :key="pod.name"
-            class="orchestration-pod-chip term-btn"
-            :class="{ 'orchestration-pod-chip--migrating': isPodMigrating(pod.deploymentName) }"
-            :title="pod.deploymentName || pod.name"
-          >
-            <span
-              class="orchestration-pod-chip__drag"
-              :class="{
-                'orchestration-pod-chip__drag--active': dragActive && dragged?.deploymentName === pod.deploymentName,
-                'orchestration-pod-chip__drag--migrating': isPodMigrating(pod.deploymentName),
-              }"
-              @pointerdown="onPodPointerDown(pod.deploymentName, pod.name, $event)"
-            >
-              <span
-                v-if="isPodMigrating(pod.deploymentName)"
-                class="orchestration-pod-chip__spinner"
-                aria-hidden="true"
-              />
-              {{ pod.deploymentName || pod.name }}
-            </span>
-            <button
-              v-if="pod.deploymentName"
-              type="button"
-              class="orchestration-pod-chip__close"
-              :disabled="interactionLocked || isPodMigrating(pod.deploymentName)"
-              title="Остановить под (deployment → 0 реплик)"
-              @click.stop.prevent="onStopDeployment(pod.deploymentName)"
-            >
-              ×
-            </button>
-          </div>
+            :pod="pod"
+            :busy="orchestrationTasks.isDeploymentBusy(pod.deploymentName)"
+            :drag-active="dragActive"
+            :dragged-deployment="dragged?.deploymentName"
+            @pointerdown="onPodPointerDown(pod.deploymentName, pod.name, $event, node.name)"
+            @stop="onStopDeployment(pod.deploymentName)"
+          />
           <span v-if="!(podsByNode[node.name]?.length)" class="term-text-dim term-fs-2xs">нет подов</span>
         </div>
       </div>
@@ -801,7 +516,6 @@ onUnmounted(() => {
 }
 .orchestration-card--refresh {
   opacity: 0.88;
-  pointer-events: none;
 }
 .orchestration-node-drop--active {
   outline: 2px solid rgba(251, 146, 60, 0.65);
@@ -952,57 +666,6 @@ onUnmounted(() => {
   }
 }
 
-.orchestration-pod-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.15rem;
-  font-size: var(--fs-2xs);
-  padding: 0.2rem 0.35rem 0.2rem 0.45rem;
-}
-
-.orchestration-pod-chip--migrating {
-  border-color: rgba(251, 146, 60, 0.45);
-  box-shadow: 0 0 0 1px rgba(251, 146, 60, 0.2);
-}
-
-.orchestration-pod-chip__drag {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  cursor: grab;
-  flex: 1;
-  min-width: 0;
-  touch-action: none;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.orchestration-pod-chip__drag--active {
-  opacity: 0.45;
-}
-
-.orchestration-pod-chip__drag--migrating {
-  cursor: wait;
-  pointer-events: none;
-}
-
-.orchestration-pod-chip__spinner {
-  display: inline-block;
-  width: 0.85rem;
-  height: 0.85rem;
-  border: 2px solid rgba(251, 146, 60, 0.25);
-  border-top-color: var(--accent, #fb923c);
-  border-radius: 50%;
-  animation: orchestration-pod-spin 0.75s linear infinite;
-  flex-shrink: 0;
-}
-
-@keyframes orchestration-pod-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .orchestration-drag-ghost {
   position: fixed;
   z-index: 400;
@@ -1019,30 +682,5 @@ onUnmounted(() => {
   max-width: min(16rem, calc(100vw - 2rem));
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.orchestration-pod-chip__close {
-  flex-shrink: 0;
-  width: 1.35rem;
-  height: 1.35rem;
-  padding: 0;
-  margin: 0;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-muted, #888);
-  font-size: 1rem;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.orchestration-pod-chip__close:hover:not(:disabled) {
-  color: var(--accent, #fb923c);
-  background: rgba(251, 146, 60, 0.12);
-}
-
-.orchestration-pod-chip__close:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }
 </style>

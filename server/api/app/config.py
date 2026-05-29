@@ -69,9 +69,8 @@ class Settings(BaseSettings):
     orchestration_weight_cpu: float = 1.0
     #: Метка ноды для разрыва ничьих f (меньше ms — лучше). Пусто — только имя ноды.
     k8s_orchestration_latency_label: str = ""
-    #: Нода с этой парой label/value исключается из авто-оркестрации (ручной запуск доступен).
-    k8s_auto_orchestration_block_label: str = "wolfpack.io/auto-orchestration"
-    k8s_auto_orchestration_block_value: str = "blocked"
+    #: Значения wolfpack.io/role: опционально исключить из авто-оркестрации (пусто — не исключать).
+    k8s_auto_orchestration_exclude_role_values: str = ""
 
     rosout_ingest_token: str = "change-me-ingest-token"
 
@@ -98,6 +97,14 @@ class Settings(BaseSettings):
     @property
     def orchestration_excluded_roles(self) -> frozenset[str]:
         raw = (self.k8s_orchestration_exclude_role_values or "").strip()
+        if not raw:
+            return frozenset()
+        return frozenset(x.strip().lower() for x in raw.split(",") if x.strip())
+
+    @property
+    def auto_orchestration_excluded_roles(self) -> frozenset[str]:
+        """Роли, видимые в UI, но исключённые из авто-выбора ноды (по умолчанию dev)."""
+        raw = (self.k8s_auto_orchestration_exclude_role_values or "").strip()
         if not raw:
             return frozenset()
         return frozenset(x.strip().lower() for x in raw.split(",") if x.strip())

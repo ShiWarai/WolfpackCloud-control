@@ -1,4 +1,16 @@
 # Секреты Keycloak: см. keycloak-secrets.example.yaml → keycloak-secrets.yaml (.gitignore), kubectl apply -f keycloak-secrets.yaml перед kustomize.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: keycloak-postgres-pvc
+  namespace: wolfpackcloud-auth
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -8,6 +20,8 @@ metadata:
     app.kubernetes.io/name: postgres-keycloak
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: postgres-keycloak
@@ -24,6 +38,9 @@ spec:
                   - key: kubernetes.io/arch
                     operator: In
                     values: ["arm64"]
+                  - key: wolfpack.io/role
+                    operator: In
+                    values: ["worker"]
       containers:
         - name: postgres
           image: postgres:16-alpine
@@ -52,7 +69,8 @@ spec:
               memory: 256Mi
       volumes:
         - name: data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: keycloak-postgres-pvc
 ---
 apiVersion: v1
 kind: Service
@@ -93,6 +111,9 @@ spec:
                   - key: kubernetes.io/arch
                     operator: In
                     values: ["arm64"]
+                  - key: wolfpack.io/role
+                    operator: In
+                    values: ["worker"]
       volumes:
         - name: realm-import
           configMap:
@@ -142,11 +163,16 @@ spec:
             - name: realm-import
               mountPath: /opt/keycloak/data/import
               readOnly: true
+          startupProbe:
+            httpGet:
+              path: /health/ready
+              port: 9000
+            periodSeconds: 10
+            failureThreshold: 30
           readinessProbe:
             httpGet:
               path: /health/ready
               port: 9000
-            initialDelaySeconds: 30
             periodSeconds: 10
           resources:
             requests:
