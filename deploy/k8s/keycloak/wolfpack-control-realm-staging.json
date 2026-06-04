@@ -26,7 +26,6 @@
       "serviceAccountsEnabled": false,
       "authorizationServicesEnabled": false,
       "redirectUris": [
-        "https://staging.wolfpack.robotics-rtuitlab.ru/*",
         "http://localhost:9200/*",
         "http://127.0.0.1:9200/*",
         "http://127.0.0.1:18081/*",
@@ -34,7 +33,6 @@
         "https://oauth.pstmn.io/*"
       ],
       "webOrigins": [
-        "https://staging.wolfpack.robotics-rtuitlab.ru",
         "https://auth.wolfpack.robotics-rtuitlab.ru",
         "http://127.0.0.1:18081",
         "https://oauth.pstmn.io"

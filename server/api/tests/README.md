@@ -24,7 +24,8 @@ chmod +x scripts/run-pytest-staging-postgres.sh
 ./scripts/run-pytest-staging-postgres.sh tests/test_routers_crud.py -q
 ```
 
-Нужны: `kubectl`, доступ к namespace `wolfpackcloud-control-staging`, Secret `control-postgres-secret`.
+Нужны: `kubectl`, Secret-файлы staging (см. `deploy/k8s/staging/*.example.yaml`).  
+`./scripts/run-pytest-staging-postgres.sh` из корня репо **сам** создаёт и удаляет namespace.
 
 Переменные: `STAGING_NS`, `POSTGRES_LOCAL_PORT` (default 15432), `PYTEST_DATABASE_NAME`.
 

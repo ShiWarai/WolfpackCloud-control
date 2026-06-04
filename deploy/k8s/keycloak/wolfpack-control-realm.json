@@ -56,6 +56,28 @@
       "redirectUris": [],
       "webOrigins": [],
       "fullScopeAllowed": true
+    },
+    {
+      "clientId": "wolfpack-data-lake-admin",
+      "name": "WolfpackCloud Data Lake Admin UI",
+      "enabled": true,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://data-lake.robotics-rtuitlab.ru/oauth2/callback"
+      ],
+      "webOrigins": [
+        "https://data-lake.robotics-rtuitlab.ru"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://data-lake.robotics-rtuitlab.ru/oauth2/sign_in"
+      },
+      "fullScopeAllowed": true
     }
   ]
 }

@@ -34,6 +34,13 @@ spec:
                   - key: kubernetes.io/arch
                     operator: In
                     values: ["arm64"]
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: wolfpack.io/storage
+                    operator: In
+                    values: ["true"]
       containers:
         - name: postgres
           image: postgres:16-alpine

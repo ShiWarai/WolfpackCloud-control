@@ -55,7 +55,7 @@ flowchart LR
 | UI + API | `https://wolfpack.robotics-rtuitlab.ru` — `/` UI, `/api` backend |
 | OpenAPI / Swagger UI | `https://wolfpack.robotics-rtuitlab.ru/api/docs` (JSON: `/api/openapi.json`, ReDoc: `/api/redoc`) |
 | Keycloak | `https://auth.wolfpack.robotics-rtuitlab.ru` |
-| Staging API | `https://staging.wolfpack.robotics-rtuitlab.ru/api` (см. [deploy/k8s/staging/README.md](deploy/k8s/staging/README.md)) |
+| Staging API | port-forward `http://127.0.0.1:18081/api` (см. [deploy/k8s/staging/README.md](deploy/k8s/staging/README.md)) |
 
 В Swagger UI: **Authorize** → **KeycloakOIDC** — вход через Keycloak (authorization code + PKCE; клиент по умолчанию `wolfpack-control-web`, см. `KEYCLOAK_SWAGGER_CLIENT_ID` в [`env.vars.reference`](env.vars.reference)). Redirect: `{origin}/api/docs/oauth2-redirect`. Если realm уже создан без нужных redirect URIs — добавьте их в Keycloak ([wolfpack-control-realm.json](deploy/k8s/keycloak/wolfpack-control-realm.json)).
 

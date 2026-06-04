@@ -1,8 +1,27 @@
 # Staging Control API (load / e2e)
 
-Отдельный namespace **`wolfpackcloud-control-staging`**: свой Postgres, API на realm **`wolfpack-control-staging`**. Production (`wolfpackcloud-control`) для k6 по умолчанию не используется.
+Ephemeral namespace **`wolfpackcloud-control-staging`**: поднимается на время тестов и **удаляется** после прогона (см. ниже). Production (`wolfpackcloud-control`) для k6 по умолчанию не используется.
 
-## Порядок развёртывания
+## Автоматический lifecycle (рекомендуется)
+
+Скрипты **`scripts/staging-up.sh`**, **`scripts/staging-down.sh`**, **`scripts/with-staging.sh`**:
+
+| Команда | Поведение |
+|---------|-----------|
+| `./scripts/run-pytest-staging-postgres.sh` | down (если был) → up → pytest → **delete namespace** |
+| `loadtests/run-load-staging.sh` | то же для k6 |
+| `STAGING_KEEP=1 …` | не удалять NS после теста |
+| `STAGING_SKIP_LIFECYCLE=1 …` | только тест, NS поднят вручную |
+
+```bash
+# Ручной цикл
+./scripts/staging-down.sh || true
+./scripts/staging-up.sh
+# … тесты …
+./scripts/staging-down.sh
+```
+
+## Ручное развёртывание (долгоживущий staging)
 
 ```bash
 cd WolfpackCloud-control
@@ -30,14 +49,17 @@ kubectl rollout status deployment/control-api -n wolfpackcloud-control-staging -
 
 ## Доступ к API
 
-| Способ | URL |
-|--------|-----|
-| Ingress (рекомендуется) | `https://staging.wolfpack.robotics-rtuitlab.ru/api` |
-| Port-forward | `kubectl port-forward -n wolfpackcloud-control-staging svc/control-api 18081:8000` → `http://127.0.0.1:18081/api` |
+Только **port-forward** (публичного DNS/Ingress для staging нет):
 
-DNS для `staging.wolfpack.robotics-rtuitlab.ru` должен указывать на тот же Ingress, что и prod (A/CNAME на тот же IP, что `wolfpack.robotics-rtuitlab.ru`, например `77.232.130.196`). Без записи cert-manager HTTP-01 и HTTPS не заработают; до появления DNS используйте port-forward (см. таблицу выше).
+```bash
+kubectl port-forward -n wolfpackcloud-control-staging svc/control-api 18081:8000
+# API: http://127.0.0.1:18081/api
+export STAGING_BASE_URL=http://127.0.0.1:18081
+```
 
-Staging `control-api` SA привязан к Role `control-zenoh-namespace` в `wolfpackcloud-zenoh` (`rbac-zenoh-binding.yaml`) — иначе `/api/cluster/deployments` и `/api/cluster/pods` отдают 502.
+`run-load-staging.sh` / pytest по умолчанию используют этот URL.
+
+Staging `control-api` SA привязан к Role `control-zenoh-namespace` в **`wolfpackcloud-zenoh`** (`rbac-zenoh-binding.yaml` применяется **вне** kustomize — иначе binding уезжает в staging NS и `/api/cluster/*` отдаёт 502).
 
 ## Отличия от production
 
@@ -49,13 +71,14 @@ Staging `control-api` SA привязан к Role `control-zenoh-namespace` в `
 
 ## Pytest (PostgreSQL)
 
-Отдельная БД **`wolfpack_control_pytest`** на staging Postgres — не `wolfpack_control_staging`:
+Отдельная БД **`wolfpack_control_pytest`** на staging Postgres — не `wolfpack_control_staging`.  
+Обёртка из корня репо сама поднимает/снимает namespace:
 
 ```bash
 cd WolfpackCloud-control
 ./scripts/run-pytest-staging-postgres.sh
-# или из server/api:
-# ./server/api/scripts/run-pytest-staging-postgres.sh
+# только pytest без lifecycle:
+# STAGING_SKIP_LIFECYCLE=1 ./server/api/scripts/run-pytest-staging-postgres.sh
 ```
 
 ## Load / e2e

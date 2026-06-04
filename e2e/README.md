@@ -2,7 +2,8 @@
 
 Смок после деплоя UI + Keycloak: вход и страница оркестрации.
 
-Рекомендуется **staging**: realm `wolfpack-control-staging`, пользователи из Secret `loadtest-credentials` (см. [`deploy/k8s/staging/README.md`](../deploy/k8s/staging/README.md)).
+Для **staging API** (без публичного UI) используйте load/pytest и port-forward — см. [`deploy/k8s/staging/README.md`](../deploy/k8s/staging/README.md).  
+Browser E2E ниже — обычно против **production** UI (`https://wolfpack.robotics-rtuitlab.ru`).
 
 ## Зависимости
 
@@ -17,34 +18,18 @@ pip install -r requirements-e2e.txt
 
 | Переменная | Описание |
 |------------|----------|
-| `WPC_UI_BASE_URL` | Корень SPA (staging: `https://staging.wolfpack.robotics-rtuitlab.ru` когда задеплоен client) |
+| `WPC_UI_BASE_URL` | Корень SPA (по умолчанию prod: `https://wolfpack.robotics-rtuitlab.ru`) |
 | `KEYCLOAK_TEST_USER` | Логин; алиасы: `KEYCLOAK_USERNAME`, `LOADTEST_USERNAME` |
 | `KEYCLOAK_TEST_PASSWORD` | Пароль; алиасы: `KEYCLOAK_PASSWORD`, `LOADTEST_PASSWORD` |
 | `HEADLESS` | `1` (по умолчанию) или `0` для окна браузера |
 | `WPC_E2E_SKIP` | Если установлено (любое значение) — скрипт завершается с кодом 0 без запуска браузера |
 
-Staging defaults (после `./scripts/keycloak-seed-staging-users.sh`):
-
-- `loadtest-admin` — admin + user (orchestration)
-- `loadtest-user` — user only
-
-Пароли — в Secret `loadtest-credentials` (`kubectl get secret loadtest-credentials -n wolfpackcloud-control-staging -o yaml`).
-
-## Запуск (staging)
+## Запуск (production UI)
 
 ```bash
-export WPC_UI_BASE_URL=https://staging.wolfpack.robotics-rtuitlab.ru
-export KEYCLOAK_TEST_USER=loadtest-admin
-export KEYCLOAK_TEST_PASSWORD='…'   # из loadtest-credentials Secret
-python smoke_orchestration.py
-```
-
-Или те же переменные, что и load tests:
-
-```bash
-export WPC_UI_BASE_URL=https://staging.wolfpack.robotics-rtuitlab.ru
-export KEYCLOAK_USERNAME=loadtest-admin
-export KEYCLOAK_PASSWORD='…'
+export WPC_UI_BASE_URL=https://wolfpack.robotics-rtuitlab.ru
+export KEYCLOAK_TEST_USER=wolfpack-operator
+export KEYCLOAK_TEST_PASSWORD='…'
 python smoke_orchestration.py
 ```
 
@@ -52,7 +37,7 @@ python smoke_orchestration.py
 
 ## CI
 
-Вынесите в отдельный job после деплоя на staging; передайте секреты через переменные окружения. Таймаут и повторы при флаках настройте оболочкой CI.
+Отдельный job с prod URL и секретами в окружении. Таймаут и повторы при флаках — оболочкой CI.
 
 ## Запасной вариант
 

@@ -11,7 +11,7 @@ namespace: wolfpackcloud-control-staging
 resources:
   - namespace.yaml
   - rbac-orchestrator.yaml
-  - rbac-zenoh-binding.yaml
+  # rbac-zenoh-binding.yaml — apply отдельно (namespace wolfpackcloud-zenoh; kustomize namespace: staging ломает binding)
   - postgres.yaml
   - api.yaml
-  - ingress.yaml
+  # Ingress (публичный DNS) не используется — доступ только port-forward, см. README
