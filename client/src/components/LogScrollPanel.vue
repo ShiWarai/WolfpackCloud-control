@@ -10,7 +10,7 @@ const props = withDefaults(
     empty?: boolean
     emptyText?: string
     alertText?: string | null
-    /** Меняется при обновлении данных — триггер автоскролла (напр. items.length). */
+    /** Меняется при обновлении данных — триггер автоскролла (напр. scrollGeneration из буфера). */
     scrollTrigger?: number
     scrollMode?: LogAutoScrollMode
     /** monospaced log lines vs произвольный контент (таблица). */
@@ -27,14 +27,33 @@ const props = withDefaults(
   },
 )
 
+/** true = не обрезать буфер сверху (режим чтения). */
+const freezeTrim = defineModel<boolean>('freezeTrim', { default: false })
+
 const autoScroll = ref(true)
 const containerRef = ref<HTMLElement | null>(null)
-const { scrollToEnd } = useLogAutoScroll(containerRef, autoScroll, toRef(props, 'scrollMode'))
+const { captureIfDisabled, onContentUpdated } = useLogAutoScroll(
+  containerRef,
+  autoScroll,
+  toRef(props, 'scrollMode'),
+)
+
+watch(autoScroll, (on) => {
+  freezeTrim.value = !on
+}, { immediate: true })
 
 watch(
   () => props.scrollTrigger,
   () => {
-    void scrollToEnd()
+    captureIfDisabled()
+  },
+  { flush: 'sync' },
+)
+
+watch(
+  () => props.scrollTrigger,
+  () => {
+    void onContentUpdated()
   },
   { flush: 'post' },
 )
@@ -42,10 +61,17 @@ watch(
 watch(
   () => props.loading,
   (loading, wasLoading) => {
-    if (wasLoading && !loading) void scrollToEnd()
+    if (wasLoading && !loading) {
+      captureIfDisabled()
+      void onContentUpdated()
+    }
   },
-  { flush: 'post' },
 )
+
+function onViewportScroll() {
+  if (autoScroll.value) return
+  captureIfDisabled()
+}
 </script>
 
 <template>
@@ -72,6 +98,7 @@ watch(
       ref="containerRef"
       class="log-scroll-panel__viewport"
       :class="{ 'log-scroll-panel__viewport--plain': variant === 'plain' }"
+      @scroll="onViewportScroll"
     >
       <div v-if="loading && empty" class="term-text-dim log-scroll-panel__placeholder">
         Загрузка...
@@ -159,6 +186,7 @@ watch(
   height: min(32rem, calc(100vh - 12rem));
   min-height: 14rem;
   overflow: auto;
+  overflow-anchor: none;
   background: var(--bg);
   border: 1px solid var(--border);
   padding: 0.75rem 1rem;

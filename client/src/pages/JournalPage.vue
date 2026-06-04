@@ -12,8 +12,18 @@ const logLimit = ref(200)
 const eventLimit = ref(200)
 const eventStatusFilter = ref('')
 
-const { entries: logEntries, reset: resetLogsState, merge: mergeLogEntries } =
-  useRosLogBuffer(300)
+const logFreezeTrim = ref(false)
+const {
+  entries: logEntries,
+  reset: resetLogsState,
+  merge: mergeLogEntries,
+  trimNow: trimLogBuffer,
+  scrollGeneration: logScrollGeneration,
+} = useRosLogBuffer(300, logFreezeTrim)
+
+watch(logFreezeTrim, (frozen) => {
+  if (!frozen) trimLogBuffer()
+})
 const logsStatus = ref<LogsStatus | null>(null)
 const logsFetchError = ref<string | null>(null)
 const deploymentEvents = ref<DeploymentEvent[]>([])
@@ -170,13 +180,14 @@ watch([logLimit, eventLimit, eventStatusFilter], () => {
       <div class="term-robot-content">
         <div v-show="activeTab === 'ros_logs'" class="term-robot-panel term-active">
           <LogScrollPanel
+            v-model:freeze-trim="logFreezeTrim"
             title="ROS-логи (/rosout)"
             hint="Все сообщения rosout-bridge из InfluxDB. Обновление каждые ~5 с."
             :loading="logsInitialLoading"
             :empty="!logEntries.length"
             empty-text="Нет записей в журнале."
             :alert-text="logsAvailabilityMessage()"
-            :scroll-trigger="logEntries.length"
+            :scroll-trigger="logScrollGeneration"
           >
             <template #toolbar>
               <label class="journal-filter">
@@ -191,6 +202,7 @@ watch([logLimit, eventLimit, eventStatusFilter], () => {
             <div
               v-for="entry in logEntries"
               :key="entry.id"
+              :data-log-entry-id="entry.id"
               class="log-scroll-panel__line"
             >
               {{ formatLogLine(entry) }}
@@ -240,7 +252,7 @@ watch([logLimit, eventLimit, eventStatusFilter], () => {
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="ev in deploymentEvents" :key="ev.id">
+                <tr v-for="ev in deploymentEvents" :key="ev.id" :data-log-entry-id="ev.id">
                   <td>{{ formatDate(ev.created_at) }}</td>
                   <td>{{ ev.deployment }}</td>
                   <td>{{ formatHostRoute(ev.from_host, ev.to_host) }}</td>

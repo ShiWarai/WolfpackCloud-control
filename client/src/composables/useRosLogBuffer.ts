@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { ref, type Ref } from 'vue'
 import type { RosLogEntry } from '@/api/logs'
 
 function sortLogEntries(entries: RosLogEntry[]): RosLogEntry[] {
@@ -11,13 +11,26 @@ function sortLogEntries(entries: RosLogEntry[]): RosLogEntry[] {
 }
 
 /** Накопление ROS-логов с дедупом по id и обрезкой хвоста. */
-export function useRosLogBuffer(maxLines: number) {
+export function useRosLogBuffer(
+  maxLines: number,
+  /** true — не удалять старые строки сверху (режим чтения без автоскролла). */
+  freezeTrim: Ref<boolean> = ref(false),
+) {
   const entries = ref<RosLogEntry[]>([])
+  /** +1 при любом изменении списка. */
+  const scrollGeneration = ref(0)
   const knownIds = new Set<number>()
+
+  function trimToMax() {
+    if (entries.value.length <= maxLines) return
+    const dropped = entries.value.splice(0, entries.value.length - maxLines)
+    for (const entry of dropped) knownIds.delete(entry.id)
+  }
 
   function reset() {
     entries.value = []
     knownIds.clear()
+    scrollGeneration.value = 0
   }
 
   /** @returns true если добавлены новые строки */
@@ -31,12 +44,21 @@ export function useRosLogBuffer(maxLines: number) {
     if (!added.length) return false
 
     entries.value = [...entries.value, ...added]
-    if (entries.value.length > maxLines) {
-      const dropped = entries.value.splice(0, entries.value.length - maxLines)
-      for (const entry of dropped) knownIds.delete(entry.id)
+    if (!freezeTrim.value) {
+      trimToMax()
     }
+    scrollGeneration.value += 1
     return true
   }
 
-  return { entries, reset, merge }
+  /** После выключения freeze — обрезать до лимита (напр. при включении автоскролла). */
+  function trimNow() {
+    const before = entries.value.length
+    trimToMax()
+    if (entries.value.length !== before) {
+      scrollGeneration.value += 1
+    }
+  }
+
+  return { entries, reset, merge, trimNow, scrollGeneration }
 }

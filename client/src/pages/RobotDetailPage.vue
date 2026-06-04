@@ -24,8 +24,18 @@ const editNetworkIdStr = ref('')
 const networks = ref<Network[]>([])
 const showDeleteConfirm = ref(false)
 
-const { entries: logEntries, reset: resetLogsState, merge: mergeLogEntries } =
-  useRosLogBuffer(150)
+const logFreezeTrim = ref(false)
+const {
+  entries: logEntries,
+  reset: resetLogsState,
+  merge: mergeLogEntries,
+  trimNow: trimLogBuffer,
+  scrollGeneration: logScrollGeneration,
+} = useRosLogBuffer(150, logFreezeTrim)
+
+watch(logFreezeTrim, (frozen) => {
+  if (!frozen) trimLogBuffer()
+})
 const logsInitialLoading = ref(false)
 const logsRefreshInFlight = ref<Promise<void> | null>(null)
 /** Инвалидируется при unmount / смене робота — игнорируем устаревшие fetch. */
@@ -369,16 +379,18 @@ onUnmounted(() => {
           
           <div v-show="activeTab === 'logs'" class="term-robot-panel term-active">
             <LogScrollPanel
+              v-model:freeze-trim="logFreezeTrim"
               title="Логи ROS (/rosout)"
               hint="Из rosout-bridge для выбранной сети (привязка робота к ROS_DOMAIN_ID). Обновление каждые ~4 с."
               :loading="logsInitialLoading"
               :empty="!logEntries.length"
               empty-text="Нет записей (или rosout-bridge не запущен / нет network_id у робота)."
-              :scroll-trigger="logEntries.length"
+              :scroll-trigger="logScrollGeneration"
             >
               <div
                 v-for="entry in logEntries"
                 :key="entry.id"
+                :data-log-entry-id="entry.id"
                 class="log-scroll-panel__line"
               >
                 {{ formatLogLine(entry) }}
