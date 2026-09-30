@@ -1,0 +1,58 @@
+# Local/dev stack: Postgres + Control API + Vue client (Keycloak expected external or port-forward).
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-wolfpack_control}
+      POSTGRES_USER: ${POSTGRES_USER:-wolfpack_control}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wolfpack_control}
+    volumes:
+      - control_pg_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wolfpack_control}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ./server/api
+      dockerfile: Dockerfile
+      target: development
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-wolfpack_control}:${POSTGRES_PASSWORD:-wolfpack_control}@postgres:5432/${POSTGRES_DB:-wolfpack_control}
+      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER:-http://localhost:8080/realms/wolfpack-control}
+      KEYCLOAK_JWKS_URL: ${KEYCLOAK_JWKS_URL:-http://localhost:8080/realms/wolfpack-control/protocol/openid-connect/certs}
+      KEYCLOAK_AUDIENCE: ${KEYCLOAK_AUDIENCE:-wolfpack-control-web}
+      K8S_NAMESPACE: ${K8S_NAMESPACE:-wolfpackcloud-zenoh}
+      ROSOUT_INGEST_TOKEN: ${ROSOUT_INGEST_TOKEN:-dev-ingest-token-change-me}
+      DEBUG: ${DEBUG:-true}
+    volumes:
+      - ./server/api/app:/app/app:ro
+    ports:
+      - "${API_PORT:-9200}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  client:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0 --port 5173"
+    volumes:
+      - ./client:/app
+    ports:
+      - "${CLIENT_PORT:-9201}:5173"
+    environment:
+      # Dev: Vite reads VITE_* at build time; for dev server use .env.development in client/
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:9200}
+      VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL:-http://localhost:8080}
+      VITE_KEYCLOAK_REALM: ${VITE_KEYCLOAK_REALM:-wolfpack-control}
+      VITE_KEYCLOAK_CLIENT_ID: ${VITE_KEYCLOAK_CLIENT_ID:-wolfpack-control-web}
+
+volumes:
+  control_pg_data:

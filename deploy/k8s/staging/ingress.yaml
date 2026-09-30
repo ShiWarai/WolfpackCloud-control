@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: wolfpackcloud-control-staging-api
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - staging.wolfpack.robotics-rtuitlab.ru
+      secretName: tls-staging-wolfpack-robotics-rtuitlab-ru
+  rules:
+    - host: staging.wolfpack.robotics-rtuitlab.ru
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: control-api
+                port:
+                  number: 8000

@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Перед apply: kubectl apply -f control-infra-secrets.yaml и api-secret.yaml (копии из *.example.yaml, не в git).
+namespace: wolfpackcloud-control
+
+resources:
+  - namespace.yaml
+  - rbac-orchestrator.yaml
+  - postgres.yaml
+  - api.yaml
+  - client.yaml
+  - ingress.yaml

@@ -1,0 +1,37 @@
+# Презеты compute-peer (синхрон с deploy/k3s/wolfpackcloud-control-peers/)
+presets:
+  - id: compute-peer-alpha
+    deployment_name: compute-peer-alpha
+    display_name: Alpha — /topic_a ↔ /topic_b
+    publish_topic: /topic_a
+    subscribe_topic: /topic_b
+    peer_shard: 1
+    memory_request_mib: 256
+    cpu_request_millicores: 100
+
+  - id: compute-peer-beta
+    deployment_name: compute-peer-beta
+    display_name: Beta — /topic_b ↔ /topic_a
+    publish_topic: /topic_b
+    subscribe_topic: /topic_a
+    peer_shard: 2
+    memory_request_mib: 256
+    cpu_request_millicores: 100
+
+  - id: compute-peer-gamma
+    deployment_name: compute-peer-gamma
+    display_name: Gamma — /topic_c ↔ /topic_b
+    publish_topic: /topic_c
+    subscribe_topic: /topic_b
+    peer_shard: 3
+    memory_request_mib: 256
+    cpu_request_millicores: 100
+
+  - id: demo-robot-agent
+    kind: robot_agent
+    deployment_name: demo-robot-agent
+    display_name: Тестовый робот — pairing + heartbeat
+    robot_name: demo-robot-k8s
+    memory_request_mib: 128
+    cpu_request_millicores: 50
+    privileged: true

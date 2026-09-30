@@ -1,0 +1,11 @@
+# Увеличенные таймауты до Keycloak (медленный старт / ARM).
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: keycloak-backend
+  namespace: wolfpackcloud-auth
+spec:
+  forwardingTimeouts:
+    dialTimeout: 30s
+    responseHeaderTimeout: 300s
+    idleConnTimeout: 120s

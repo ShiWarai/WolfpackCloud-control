@@ -1,0 +1,5 @@
+export { default as LoginPage } from './LoginPage.vue'
+export { default as DashboardPage } from './DashboardPage.vue'
+export { default as RobotsPage } from './RobotsPage.vue'
+export { default as RobotDetailPage } from './RobotDetailPage.vue'
+export { default as PairingPage } from './PairingPage.vue'

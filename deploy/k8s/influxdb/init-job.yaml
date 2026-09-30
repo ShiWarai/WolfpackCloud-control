@@ -1,0 +1,51 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: wolfpackcloud-influxdb-init-buckets
+  namespace: wolfpackcloud-control
+spec:
+  ttlSecondsAfterFinished: 86400
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - orangepi5-abandon-alien
+      containers:
+        - name: init
+          image: influxdb:2.7-alpine
+          env:
+            - name: INFLUX_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: wolfpackcloud-influxdb-secret
+                  key: admin-token
+            - name: INFLUX_ORG
+              value: wolfpackcloud_influxdb
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              until wget -qO- http://wolfpackcloud-influxdb:8086/health >/dev/null 2>&1; do
+                echo "waiting for wolfpackcloud-influxdb..."
+                sleep 2
+              done
+              influx config create \
+                --config-name default \
+                --host-url http://wolfpackcloud-influxdb:8086 \
+                --org "$INFLUX_ORG" \
+                --token "$INFLUX_TOKEN" \
+                --active 2>/dev/null || true
+              influx bucket create \
+                --name deployment_events \
+                --org "$INFLUX_ORG" \
+                --retention 2160h \
+                --description "Deployment/migration events" 2>/dev/null || true
+              echo "InfluxDB buckets ready"

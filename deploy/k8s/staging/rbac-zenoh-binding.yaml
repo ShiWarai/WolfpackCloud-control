@@ -1,0 +1,15 @@
+# Staging control-api SA needs the same zenoh namespace Role as prod (deployments/pods).
+# Role control-zenoh-namespace is created by deploy/k8s/rosout-bridge/rbac-control-api-zenoh.yaml.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: control-api-staging-zenoh
+  namespace: wolfpackcloud-zenoh
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: control-zenoh-namespace
+subjects:
+  - kind: ServiceAccount
+    name: control-api
+    namespace: wolfpackcloud-control-staging

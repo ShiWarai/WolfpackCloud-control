@@ -1,0 +1,84 @@
+# Secret control-postgres-secret: см. control-infra-secrets.example.yaml → локально control-infra-secrets.yaml (в .gitignore), затем kubectl apply -f control-infra-secrets.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: control-postgres-pvc
+  namespace: wolfpackcloud-control
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: wolfpackcloud-control
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: control-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: control-postgres
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/arch
+                    operator: In
+                    values: ["arm64"]
+                  # local-path PVC уже привязан к этой ноде.
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: ["orangepi5-abandon-alien"]
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: wolfpack_control
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: control-postgres-secret
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: control-postgres-secret
+                  key: password
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+              subPath: pgdata
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: control-postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: wolfpackcloud-control
+spec:
+  selector:
+    app.kubernetes.io/name: control-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432

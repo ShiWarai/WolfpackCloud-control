@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control-robot-agent
+  namespace: wolfpackcloud-control
+  labels:
+    app.kubernetes.io/name: control-robot-agent
+    app.kubernetes.io/component: robot-agent
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: control-robot-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: control-robot-agent
+        app.kubernetes.io/component: robot-agent
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/arch
+                    operator: In
+                    values: ["arm64"]
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - orangepi5-abandon-alien
+                      - orangepi5-water-melon
+      containers:
+        - name: agent
+          image: 10.43.50.10:5000/wolfpack-control-robot-agent:latest-arm64
+          imagePullPolicy: Always
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: WPC_SERVER_URL
+              value: http://control-api:8000
+            - name: WPC_METRICS_URL
+              value: http://control-api:8000/api/metrics
+            - name: WPC_ROBOT_NAME
+              value: demo-robot-k8s
+          volumeMounts:
+            - name: agent-data
+              mountPath: /var/lib/wpc-agent
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: agent-data
+          emptyDir: {}

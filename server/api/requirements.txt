@@ -1,0 +1,25 @@
+# FastAPI и веб
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.12
+
+# База данных
+sqlalchemy>=2.0.36
+asyncpg>=0.30.0
+alembic>=1.14.0
+
+# Валидация и сериализация
+pydantic[email]>=2.10.0
+pydantic-settings>=2.6.0
+
+# Утилиты
+python-dotenv>=1.0.1
+PyYAML>=6.0.0
+httpx>=0.28.0
+apscheduler>=3.10.0
+
+cryptography>=42.0.0
+PyJWT[cryptography]>=2.9.0
+
+# Kubernetes API (sync client; вызовы через asyncio.to_thread)
+kubernetes>=31.0.0

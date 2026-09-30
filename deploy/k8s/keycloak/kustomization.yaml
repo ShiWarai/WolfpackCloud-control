@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Перед apply: kubectl apply -f keycloak-secrets.yaml (из keycloak-secrets.example.yaml).
+namespace: wolfpackcloud-auth
+
+configMapGenerator:
+  - name: keycloak-realm-import
+    options:
+      disableNameSuffixHash: true
+    files:
+      - wolfpack-control-realm.json
+      - wolfpack-control-realm-staging.json
+
+resources:
+  - namespace.yaml
+  - traefik-serverstransport.yaml
+  - keycloak-stack.yaml

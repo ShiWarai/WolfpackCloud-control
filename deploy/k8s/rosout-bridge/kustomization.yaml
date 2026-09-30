@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Перед apply: kubectl apply -f rosout-bridge-secret.yaml (из rosout-bridge-secret.example.yaml).
+namespace: wolfpackcloud-zenoh
+
+resources:
+  - rbac-control-api-zenoh.yaml
+  - deployment.yaml

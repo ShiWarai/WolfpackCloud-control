@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Перед apply:
+#   cp control-infra-secrets-staging.example.yaml control-infra-secrets-staging.yaml
+#   cp api-secret-staging.example.yaml api-secret-staging.yaml
+#   kubectl apply -f control-infra-secrets-staging.yaml -f api-secret-staging.yaml
+#   kubectl apply -f ../keycloak/loadtest-credentials.yaml  # после cp из example
+namespace: wolfpackcloud-control-staging
+
+resources:
+  - namespace.yaml
+  - rbac-orchestrator.yaml
+  # rbac-zenoh-binding.yaml — apply отдельно (namespace wolfpackcloud-zenoh; kustomize namespace: staging ломает binding)
+  - postgres.yaml
+  - api.yaml
+  # Ingress (публичный DNS) не используется — доступ только port-forward, см. README
