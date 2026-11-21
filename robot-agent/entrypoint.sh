@@ -94,7 +94,7 @@ EOF
 }
 
 register_and_wait() {
-  local hostname arch ip pair_code elapsed=0 response status robot_token
+  local hostname arch ip pair_code agent_secret elapsed=0 response status robot_token
 
   hostname="${HOSTNAME:-${ROBOT_NAME}}"
   arch="$(detect_arch)"
@@ -117,6 +117,12 @@ register_and_wait() {
     exit 1
   }
 
+  agent_secret="$(echo "${response}" | jq -r '.agent_secret // empty')"
+  if [[ -z "${agent_secret}" ]]; then
+    log "Ответ /api/pair без agent_secret — обновите Control API"
+    exit 1
+  fi
+
   log "Код привязки: ${pair_code} (подтвердите в Control → /pairing, TTL ~15 мин)"
   echo ""
   echo "╔══════════════════════════════════════════════════════════════════╗"
@@ -126,7 +132,8 @@ register_and_wait() {
   echo ""
 
   while [[ "${elapsed}" -lt "${TIMEOUT_SEC}" ]]; do
-    response="$(curl -sfL "${SERVER_URL%/}/api/pair/${pair_code}/status" 2>/dev/null || echo "")"
+    response="$(curl -sfL -H "X-Agent-Secret: ${agent_secret}" \
+      "${SERVER_URL%/}/api/pair/${pair_code}/status" 2>/dev/null || echo "")"
     if [[ -z "${response}" ]]; then
       log "API недоступен, повтор через ${POLL_SEC}s..."
       sleep "${POLL_SEC}"

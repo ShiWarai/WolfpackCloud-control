@@ -6,6 +6,8 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+ROSOUT_INGEST_TOKEN_DEFAULT = "change-me-ingest-token"
+
 
 class Settings(BaseSettings):
     """Настройки приложения."""
@@ -21,7 +23,8 @@ class Settings(BaseSettings):
     secret_key: str = "dev-secret-key-change-in-production"
     pair_code_expiration_minutes: int = 15
 
-    database_url: str = "postgresql://wolfpack_control:wolfpack_control@localhost:5432/wolfpack_control"
+    # Dev-only fallback; в проде задаётся через Secret (DATABASE_URL).
+    database_url: str = "postgresql://wolfpack_control:CHANGE_ME@localhost:5432/wolfpack_control"
 
     # Keycloak OIDC
     keycloak_issuer: str = "http://localhost:8080/realms/wolfpack-control"
@@ -72,7 +75,7 @@ class Settings(BaseSettings):
     #: Значения wolfpack.io/role: опционально исключить из авто-оркестрации (пусто — не исключать).
     k8s_auto_orchestration_exclude_role_values: str = ""
 
-    rosout_ingest_token: str = "change-me-ingest-token"
+    rosout_ingest_token: str = ROSOUT_INGEST_TOKEN_DEFAULT
 
     influxdb_url: str = ""
     influxdb_token: str = ""
@@ -85,6 +88,13 @@ class Settings(BaseSettings):
     @property
     def influxdb_configured(self) -> bool:
         return bool((self.influxdb_url or "").strip() and (self.influxdb_token or "").strip())
+
+    @property
+    def rosout_ingest_enabled(self) -> bool:
+        if self.debug:
+            return True
+        token = (self.rosout_ingest_token or "").strip()
+        return bool(token) and token != ROSOUT_INGEST_TOKEN_DEFAULT
 
     @property
     def control_admin_identities_lower(self) -> frozenset[str]:

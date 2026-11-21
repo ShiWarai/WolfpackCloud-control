@@ -1,4 +1,4 @@
-# Секреты Keycloak: см. keycloak-secrets.example.yaml → keycloak-secrets.yaml (.gitignore), kubectl apply -f keycloak-secrets.yaml перед kustomize.
+# Секреты: см. wolfpackcloud-auth-secrets.example.yaml → wolfpackcloud-auth-secrets.yaml (.gitignore), kubectl apply -f wolfpackcloud-auth-secrets.yaml перед kustomize.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -14,21 +14,23 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: postgres-keycloak
+  name: postgres-wolfpackcloud-auth
   namespace: wolfpackcloud-auth
   labels:
-    app.kubernetes.io/name: postgres-keycloak
+    app.kubernetes.io/name: postgres-wolfpackcloud-auth
+    app.kubernetes.io/part-of: wolfpackcloud-auth
 spec:
   replicas: 1
   strategy:
     type: Recreate
   selector:
     matchLabels:
-      app.kubernetes.io/name: postgres-keycloak
+      app.kubernetes.io/name: postgres-wolfpackcloud-auth
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: postgres-keycloak
+        app.kubernetes.io/name: postgres-wolfpackcloud-auth
+        app.kubernetes.io/part-of: wolfpackcloud-auth
     spec:
       affinity:
         nodeAffinity:
@@ -52,12 +54,12 @@ spec:
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
-                  name: keycloak-db-secret
+                  name: wolfpackcloud-auth-db-secret
                   key: username
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: keycloak-db-secret
+                  name: wolfpackcloud-auth-db-secret
                   key: password
           volumeMounts:
             - name: data
@@ -75,11 +77,13 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: postgres-keycloak
+  name: postgres-wolfpackcloud-auth
   namespace: wolfpackcloud-auth
+  labels:
+    app.kubernetes.io/part-of: wolfpackcloud-auth
 spec:
   selector:
-    app.kubernetes.io/name: postgres-keycloak
+    app.kubernetes.io/name: postgres-wolfpackcloud-auth
   ports:
     - port: 5432
       targetPort: 5432
@@ -87,21 +91,26 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: keycloak
+  name: wolfpackcloud-auth
   namespace: wolfpackcloud-auth
   labels:
-    app.kubernetes.io/name: keycloak
+    app.kubernetes.io/name: wolfpackcloud-auth
+    app.kubernetes.io/part-of: wolfpackcloud-auth
 spec:
-  replicas: 1
+  replicas: 2
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
-      app.kubernetes.io/name: keycloak
+      app.kubernetes.io/name: wolfpackcloud-auth
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: keycloak
+        app.kubernetes.io/name: wolfpackcloud-auth
+        app.kubernetes.io/part-of: wolfpackcloud-auth
     spec:
       affinity:
         nodeAffinity:
@@ -114,10 +123,28 @@ spec:
                   - key: wolfpack.io/role
                     operator: In
                     values: ["worker"]
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app.kubernetes.io/name
+                    operator: In
+                    values: ["wolfpackcloud-auth"]
+              topologyKey: kubernetes.io/hostname
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 180
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 180
+      terminationGracePeriodSeconds: 60
       volumes:
         - name: realm-import
           configMap:
-            name: keycloak-realm-import
+            name: wolfpackcloud-auth-realm-import
       containers:
         - name: keycloak
           image: quay.io/keycloak/keycloak:26.0
@@ -135,21 +162,21 @@ spec:
             - name: KEYCLOAK_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: keycloak-admin-secret
+                  name: wolfpackcloud-auth-admin-secret
                   key: admin-password
             - name: KC_DB
               value: postgres
             - name: KC_DB_URL
-              value: jdbc:postgresql://postgres-keycloak:5432/keycloak
+              value: jdbc:postgresql://postgres-wolfpackcloud-auth:5432/keycloak
             - name: KC_DB_USERNAME
               valueFrom:
                 secretKeyRef:
-                  name: keycloak-db-secret
+                  name: wolfpackcloud-auth-db-secret
                   key: username
             - name: KC_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: keycloak-db-secret
+                  name: wolfpackcloud-auth-db-secret
                   key: password
             - name: KC_HOSTNAME
               value: https://auth.wolfpack.robotics-rtuitlab.ru
@@ -159,6 +186,8 @@ spec:
               value: xforwarded
             - name: KC_HEALTH_ENABLED
               value: "true"
+            - name: JAVA_OPTS_KC_HEAP
+              value: -XX:MinRAMPercentage=40 -XX:MaxRAMPercentage=70
           volumeMounts:
             - name: realm-import
               mountPath: /opt/keycloak/data/import
@@ -176,17 +205,22 @@ spec:
             periodSeconds: 10
           resources:
             requests:
-              cpu: 300m
-              memory: 512Mi
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 1500m
+              memory: 2Gi
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: keycloak
+  name: wolfpackcloud-auth
   namespace: wolfpackcloud-auth
+  labels:
+    app.kubernetes.io/part-of: wolfpackcloud-auth
 spec:
   selector:
-    app.kubernetes.io/name: keycloak
+    app.kubernetes.io/name: wolfpackcloud-auth
   ports:
     - name: http
       port: 8080
@@ -195,13 +229,15 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: keycloak-public
+  name: wolfpackcloud-auth-public
   namespace: wolfpackcloud-auth
+  labels:
+    app.kubernetes.io/part-of: wolfpackcloud-auth
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     # Длинные ответы Keycloak на ARM (ServersTransport CRD в этом namespace).
-    traefik.ingress.kubernetes.io/service.serverstransport: keycloak-backend@kubernetescrd
+    traefik.ingress.kubernetes.io/service.serverstransport: wolfpackcloud-auth-backend@kubernetescrd
 spec:
   ingressClassName: traefik
   tls:
@@ -216,6 +252,6 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: keycloak
+                name: wolfpackcloud-auth
                 port:
                   number: 8080

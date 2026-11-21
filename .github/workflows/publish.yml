@@ -1,0 +1,195 @@
+name: Publish Docker image
+
+# Гейт по образцу video-descriptor-rkllm: публикация :main только после
+# успешно завершившегося Deploy на main (то есть тестовые сборки прошли).
+
+on:
+  workflow_run:
+    workflows: ["Deploy"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY_OWNER: "${{ toLower(github.repository_owner) }}"
+
+jobs:
+  publish:
+    if: github.event.workflow_run.conclusion == 'success'
+    name: publish (${{ matrix.component }}/${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: api
+            arch: amd64
+            runner: ubuntu-latest
+          - component: api
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - component: client
+            arch: amd64
+            runner: ubuntu-latest
+          - component: client
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - component: robot-agent
+            arch: amd64
+            runner: ubuntu-latest
+          - component: robot-agent
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - component: rosout-bridge
+            arch: amd64
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push api (${{ matrix.arch }})
+        if: matrix.component == 'api'
+        uses: docker/build-push-action@v6
+        with:
+          context: server/api
+          file: server/api/Dockerfile
+          target: production
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-api:${{ matrix.arch }}-main
+            ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-api:${{ matrix.arch }}-${{ github.event.workflow_run.head_sha }}
+          cache-from: type=gha,scope=api-${{ matrix.arch }}
+
+      - name: Build and push client (${{ matrix.arch }})
+        if: matrix.component == 'client'
+        uses: docker/build-push-action@v6
+        with:
+          context: client
+          file: client/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          build-args: |
+            VITE_API_URL=/api
+            VITE_API_BASE_URL=/api
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-client:${{ matrix.arch }}-main
+            ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-client:${{ matrix.arch }}-${{ github.event.workflow_run.head_sha }}
+          cache-from: type=gha,scope=client-${{ matrix.arch }}
+
+      - name: Build and push robot-agent (${{ matrix.arch }})
+        if: matrix.component == 'robot-agent'
+        uses: docker/build-push-action@v6
+        with:
+          context: robot-agent
+          file: robot-agent/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-robot-agent:${{ matrix.arch }}-main
+            ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-robot-agent:${{ matrix.arch }}-${{ github.event.workflow_run.head_sha }}
+          cache-from: type=gha,scope=robot-agent-${{ matrix.arch }}
+
+      - name: Build and push rosout-bridge (amd64)
+        if: matrix.component == 'rosout-bridge'
+        uses: docker/build-push-action@v6
+        with:
+          context: rosout-bridge
+          file: rosout-bridge/Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-rosout-bridge:main
+            ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-rosout-bridge:${{ github.event.workflow_run.head_sha }}
+          cache-from: type=gha,scope=rosout-bridge
+
+  api-manifest:
+    if: github.event.workflow_run.conclusion == 'success'
+    needs: [publish]
+    name: api main manifest (amd64 + arm64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Merge per-arch tags into multiarch tag
+        run: |
+          set -euo pipefail
+          IMG="ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-api"
+          SHA="${{ github.event.workflow_run.head_sha }}"
+          docker buildx imagetools create \
+            -t "${IMG}:main" \
+            -t "${IMG}:${SHA}" \
+            "${IMG}:amd64-main" "${IMG}:arm64-main"
+
+  client-manifest:
+    if: github.event.workflow_run.conclusion == 'success'
+    needs: [publish]
+    name: client main manifest (amd64 + arm64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Merge per-arch tags into multiarch tag
+        run: |
+          set -euo pipefail
+          IMG="ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-client"
+          SHA="${{ github.event.workflow_run.head_sha }}"
+          docker buildx imagetools create \
+            -t "${IMG}:main" \
+            -t "${IMG}:${SHA}" \
+            "${IMG}:amd64-main" "${IMG}:arm64-main"
+
+  robot-agent-manifest:
+    if: github.event.workflow_run.conclusion == 'success'
+    needs: [publish]
+    name: robot-agent main manifest (amd64 + arm64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Merge per-arch tags into multiarch tag
+        run: |
+          set -euo pipefail
+          IMG="ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-robot-agent"
+          SHA="${{ github.event.workflow_run.head_sha }}"
+          docker buildx imagetools create \
+            -t "${IMG}:main" \
+            -t "${IMG}:${SHA}" \
+            "${IMG}:amd64-main" "${IMG}:arm64-main"

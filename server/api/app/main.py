@@ -7,7 +7,7 @@ import logging
 import sys
 from typing import Any
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 
@@ -62,6 +62,10 @@ async def lifespan(_app: FastAPI):
     stop_scheduler()
 
 
+_api_docs_url = "/api/docs" if settings.debug else None
+_api_redoc_url = "/api/redoc" if settings.debug else None
+_api_openapi_url = "/api/openapi.json" if settings.debug else None
+
 app = FastAPI(
     title=settings.app_name,
     description=(
@@ -71,21 +75,24 @@ app = FastAPI(
         "либо **HTTPBearer** — вставить access token вручную."
     ),
     version=__version__,
-    # Под префиксом /api — чтобы через Ingress (path `/api` → API) были доступны UI и JSON схемы.
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
-    openapi_url="/api/openapi.json",
+    docs_url=_api_docs_url,
+    redoc_url=_api_redoc_url,
+    openapi_url=_api_openapi_url,
     lifespan=lifespan,
-    swagger_ui_oauth2_redirect_url="/api/docs/oauth2-redirect",
+    swagger_ui_oauth2_redirect_url="/api/docs/oauth2-redirect" if settings.debug else None,
     swagger_ui_init_oauth={
         "clientId": _swagger_oauth_client_id,
         "appName": settings.app_name,
         "usePkceWithAuthorizationCodeGrant": True,
         "scopes": "openid profile email",
-    },
+    }
+    if settings.debug
+    else None,
     swagger_ui_parameters={
         "persistAuthorization": True,
-    },
+    }
+    if settings.debug
+    else None,
 )
 
 app.add_middleware(
@@ -120,22 +127,28 @@ app.include_router(metrics_router)
 app.include_router(pairing_router)
 app.include_router(robots_router)
 
-patch_openapi_for_keycloak_swagger(app, issuer=settings.keycloak_issuer)
+if settings.debug:
+    patch_openapi_for_keycloak_swagger(app, issuer=settings.keycloak_issuer)
 
 
 @app.get("/docs", include_in_schema=False)
 async def redirect_legacy_docs() -> RedirectResponse:
-    """Локально при обращении к :8000/docs без префикса /api."""
+    if not settings.debug:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     return RedirectResponse(url="/api/docs", status_code=307)
 
 
 @app.get("/openapi.json", include_in_schema=False)
 async def redirect_legacy_openapi_json() -> RedirectResponse:
+    if not settings.debug:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     return RedirectResponse(url="/api/openapi.json", status_code=307)
 
 
 @app.get("/redoc", include_in_schema=False)
 async def redirect_legacy_redoc() -> RedirectResponse:
+    if not settings.debug:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     return RedirectResponse(url="/api/redoc", status_code=307)
 
 
@@ -164,11 +177,17 @@ async def health_check() -> dict[str, Any]:
 
 @app.get("/", tags=["system"])
 async def root() -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "name": settings.app_name,
         "version": __version__,
-        "openapi": "/api/openapi.json",
-        "swagger_ui": "/api/docs",
-        "redoc": "/api/redoc",
         "health": "/health",
     }
+    if settings.debug:
+        payload.update(
+            {
+                "openapi": "/api/openapi.json",
+                "swagger_ui": "/api/docs",
+                "redoc": "/api/redoc",
+            }
+        )
+    return payload

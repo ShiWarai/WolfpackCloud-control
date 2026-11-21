@@ -7,8 +7,12 @@ metadata:
     app.kubernetes.io/name: rosout-bridge
 spec:
   replicas: 1
+  # Recreate блокирует новый под, пока старый Terminating на недоступной ноде.
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: rosout-bridge
@@ -28,6 +32,15 @@ spec:
                   - key: kubernetes.io/arch
                     operator: In
                     values: ["arm64"]
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 60
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 60
       containers:
         - name: bridge
           image: 10.43.50.10:5000/wolfpack-rosout-bridge:latest-arm64

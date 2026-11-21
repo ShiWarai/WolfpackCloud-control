@@ -124,7 +124,6 @@ async def cluster_orchestration(_user: User = Depends(get_current_user)) -> dict
     nodes = await _run_k8s(k8s_svc.list_worker_nodes, settings)
     pods = await _run_k8s(k8s_svc.list_pods_on_nodes, settings)
     deps = await _run_k8s(k8s_svc.list_zenoh_deployments, settings)
-    worker_names = {n["name"] for n in nodes}
     by_node: dict[str, list[dict[str, Any]]] = {n["name"]: [] for n in nodes}
     orphan_pods: list[dict[str, Any]] = []
     for p in pods:

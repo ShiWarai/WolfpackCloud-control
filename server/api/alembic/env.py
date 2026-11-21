@@ -12,13 +12,9 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 from app.config import get_settings
 from app.database import Base
-from app.models import (
-    LogicalNode,
-    Network,
-    PairCode,
-    Robot,
-    User,
-)  # noqa: F401
+
+# Импорт модуля с моделями регистрирует все таблицы в Base.metadata для autogenerate.
+from app import models  # noqa: F401
 
 config = context.config
 settings = get_settings()

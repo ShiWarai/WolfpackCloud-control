@@ -2,8 +2,8 @@
 .env.local
 deploy/k8s/control/api-secret.yaml
 deploy/k8s/control/control-infra-secrets.yaml
-deploy/k8s/keycloak/keycloak-secrets.yaml
-deploy/k8s/keycloak/loadtest-credentials.yaml
+deploy/k8s/wolfpackcloud-auth/wolfpackcloud-auth-secrets.yaml
+deploy/k8s/wolfpackcloud-auth/loadtest-credentials.yaml
 deploy/k8s/staging/api-secret-staging.yaml
 deploy/k8s/staging/control-infra-secrets-staging.yaml
 deploy/k8s/rosout-bridge/rosout-bridge-secret.yaml

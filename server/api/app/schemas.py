@@ -165,6 +165,10 @@ class PairResponse(BaseModel):
     pair_code: str
     status: PairCodeStatus
     expires_at: datetime
+    agent_secret: str = Field(
+        ...,
+        description="Секрет агента для polling /status (не показывать пользователю в UI)",
+    )
     influxdb_token: str | None = Field(
         None, description="Токен InfluxDB (выдаётся после подтверждения)"
     )

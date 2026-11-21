@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
 
 def test_start_scheduler_registers_job(monkeypatch):
     from app import tasks as tasks_mod

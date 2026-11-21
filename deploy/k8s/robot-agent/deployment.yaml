@@ -62,4 +62,5 @@ spec:
               memory: 256Mi
       volumes:
         - name: agent-data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: control-robot-agent-data

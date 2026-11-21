@@ -19,7 +19,6 @@ from httpx import ASGITransport, AsyncClient
 from jwt import PyJWKClient
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.pool import NullPool
 
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 if "sqlite" not in os.environ.get("DATABASE_URL", ""):
@@ -30,6 +29,8 @@ os.environ.setdefault(
     "http://test.keycloak.invalid/realms/wolfpack/protocol/openid-connect/certs",
 )
 os.environ.setdefault("KEYCLOAK_AUDIENCE", "wolfpack-control-web")
+os.environ.setdefault("DEBUG", "true")
+os.environ.setdefault("ROSOUT_INGEST_TOKEN", "test-ingest-token")
 
 from app.config import Settings, get_settings  # noqa: E402
 

@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-wolfpack_control}
       POSTGRES_USER: ${POSTGRES_USER:-wolfpack_control}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wolfpack_control}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-CHANGE_ME}
     volumes:
       - control_pg_data:/var/lib/postgresql/data
     ports:
@@ -24,7 +24,7 @@ services:
       target: development
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-wolfpack_control}:${POSTGRES_PASSWORD:-wolfpack_control}@postgres:5432/${POSTGRES_DB:-wolfpack_control}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-wolfpack_control}:${POSTGRES_PASSWORD:-CHANGE_ME}@postgres:5432/${POSTGRES_DB:-wolfpack_control}
       KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER:-http://localhost:8080/realms/wolfpack-control}
       KEYCLOAK_JWKS_URL: ${KEYCLOAK_JWKS_URL:-http://localhost:8080/realms/wolfpack-control/protocol/openid-connect/certs}
       KEYCLOAK_AUDIENCE: ${KEYCLOAK_AUDIENCE:-wolfpack-control-web}
