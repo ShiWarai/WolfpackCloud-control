@@ -5,7 +5,7 @@ kind: Kustomization
 #   cp control-infra-secrets-staging.example.yaml control-infra-secrets-staging.yaml
 #   cp api-secret-staging.example.yaml api-secret-staging.yaml
 #   kubectl apply -f control-infra-secrets-staging.yaml -f api-secret-staging.yaml
-#   kubectl apply -f ../keycloak/loadtest-credentials.yaml  # после cp из example
+#   kubectl apply -f ../wolfpackcloud-auth/loadtest-credentials.yaml  # после cp из example
 namespace: wolfpackcloud-control-staging
 
 resources:

@@ -1,0 +1,16 @@
+# Токен привязки и telegraf.conf. emptyDir пропадал вместе с подом.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: control-robot-agent-data
+  namespace: wolfpackcloud-control
+  labels:
+    app.kubernetes.io/name: control-robot-agent
+    app.kubernetes.io/component: robot-agent
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: rtuitlab-nfs
+  resources:
+    requests:
+      storage: 1Gi

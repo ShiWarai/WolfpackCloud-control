@@ -1,6 +1,6 @@
 """Внутренние эндпоинты (rosout-bridge, без JWT)."""
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, status
 
 from app.config import get_settings
 from app.schemas import RosOutIngestBatch, RosOutIngestItem
@@ -12,6 +12,11 @@ settings = get_settings()
 
 
 def _verify_ingest_token(x_ingest_token: str | None) -> None:
+    if not settings.rosout_ingest_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Rosout ingest disabled",
+        )
     if not x_ingest_token or x_ingest_token != settings.rosout_ingest_token:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid ingest token")
 

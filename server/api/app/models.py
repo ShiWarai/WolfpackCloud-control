@@ -154,6 +154,7 @@ class PairCode(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    agent_secret: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     robot: Mapped["Robot"] = relationship("Robot", back_populates="pair_codes")
 

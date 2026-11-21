@@ -18,6 +18,8 @@ def influx_settings() -> Settings:
         influxdb_url="http://influx.test:8086",
         influxdb_token="test-token",
         influxdb_org="wolfpackcloud_influxdb",
+        rosout_ingest_token="test-ingest-token",
+        debug=True,
     )
 
 
@@ -46,7 +48,7 @@ async def test_account_returns_user_and_networks(async_client, make_access_token
 
 @pytest.mark.asyncio
 async def test_networks_crud(async_client, make_access_token, db_session):
-    user = await _seed_user(db_session, sub="net-sub", email="net@test.local")
+    await _seed_user(db_session, sub="net-sub", email="net@test.local")
     await db_session.commit()
 
     token = make_access_token(sub="net-sub", email="net@test.local")
@@ -200,9 +202,16 @@ async def test_pairing_register_confirm_and_status(async_client, make_access_tok
         json={"pair_code": "ABCD1234", "hostname": "robot-1", "name": "R1"},
     )
     assert r.status_code == 201
-    assert r.json()["pair_code"] == "ABCD1234"
+    body = r.json()
+    assert body["pair_code"] == "ABCD1234"
+    agent_secret = body["agent_secret"]
+    assert agent_secret
 
     r = await async_client.get("/api/pair/abcd1234")
+    assert r.status_code == 401
+
+    token = make_access_token(sub="pair-sub", email="pair@test.local")
+    r = await async_client.get("/api/pair/abcd1234", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200
     assert r.json()["code"] == "ABCD1234"
 
@@ -217,6 +226,12 @@ async def test_pairing_register_confirm_and_status(async_client, make_access_tok
     assert r.json()["influxdb_token"]
 
     r = await async_client.get("/api/pair/abcd1234/status")
+    assert r.status_code == 403
+
+    r = await async_client.get(
+        "/api/pair/abcd1234/status",
+        headers={"X-Agent-Secret": agent_secret},
+    )
     assert r.status_code == 200
     assert r.json()["status"] == "confirmed"
     assert r.json()["robot_token"] is not None
@@ -402,7 +417,7 @@ async def test_internal_ingest_batch(async_client, monkeypatch, influx_settings)
                     }
                 ]
             },
-            headers={"X-Ingest-Token": "change-me-ingest-token"},
+            headers={"X-Ingest-Token": "test-ingest-token"},
         )
     assert r.status_code == 204
     mock_write.assert_awaited_once()
@@ -523,7 +538,7 @@ async def test_internal_ingest_no_influx(async_client):
     r = await async_client.post(
         "/api/internal/rosout/one",
         json={"network_id": 1, "ros_node_name": "/n", "level": "INFO", "message": "m"},
-        headers={"X-Ingest-Token": "change-me-ingest-token"},
+        headers={"X-Ingest-Token": "test-ingest-token"},
     )
     assert r.status_code == 503
 
@@ -552,7 +567,7 @@ async def test_internal_ingest_one(async_client, monkeypatch, influx_settings):
         r = await async_client.post(
             "/api/internal/rosout/one",
             json={"network_id": 1, "ros_node_name": "/n", "level": "WARN", "message": "x"},
-            headers={"X-Ingest-Token": "change-me-ingest-token"},
+            headers={"X-Ingest-Token": "test-ingest-token"},
         )
     assert r.status_code == 204
     mock_write.assert_awaited_once()

@@ -12,7 +12,7 @@
 | [`server/api/`](server/api/) | Control API, Alembic, pytest — [server/api/README.md](server/api/README.md) |
 | [`rosout-bridge/`](rosout-bridge/) | ROS 2 → InfluxDB (Line Protocol), ingest-токен с API |
 | [`robot-agent/`](robot-agent/) | Демо-робот: pairing + Telegraf heartbeat |
-| [`deploy/k8s/`](deploy/k8s/) | Манифесты k3s: control, keycloak, influxdb, rosout-bridge, staging, robot-agent |
+| [`deploy/k8s/`](deploy/k8s/) | Манифесты k3s: control, wolfpackcloud-auth, influxdb, rosout-bridge, staging, robot-agent |
 | [`loadtests/`](loadtests/) | k6, Zenoh peer hammer, staging/prod guard |
 | [`e2e/`](e2e/) | Browser smoke (Selenium) |
 | [`scripts/`](scripts/) | Keycloak seed staging, pytest на Postgres staging |
@@ -57,7 +57,7 @@ flowchart LR
 | Keycloak | `https://auth.wolfpack.robotics-rtuitlab.ru` |
 | Staging API | port-forward `http://127.0.0.1:18081/api` (см. [deploy/k8s/staging/README.md](deploy/k8s/staging/README.md)) |
 
-В Swagger UI: **Authorize** → **KeycloakOIDC** — вход через Keycloak (authorization code + PKCE; клиент по умолчанию `wolfpack-control-web`, см. `KEYCLOAK_SWAGGER_CLIENT_ID` в [`env.vars.reference`](env.vars.reference)). Redirect: `{origin}/api/docs/oauth2-redirect`. Если realm уже создан без нужных redirect URIs — добавьте их в Keycloak ([wolfpack-control-realm.json](deploy/k8s/keycloak/wolfpack-control-realm.json)).
+В Swagger UI: **Authorize** → **KeycloakOIDC** — вход через Keycloak (authorization code + PKCE; клиент по умолчанию `wolfpack-control-web`, см. `KEYCLOAK_SWAGGER_CLIENT_ID` в [`env.vars.reference`](env.vars.reference)). Redirect: `{origin}/api/docs/oauth2-redirect`. Если realm уже создан без нужных redirect URIs — добавьте их в Keycloak ([wolfpack-control-realm.json](deploy/k8s/wolfpackcloud-auth/wolfpack-control-realm.json)).
 
 **DNS:** A/CNAME на основной хост и **`auth.wolfpack.robotics-rtuitlab.ru`**. Достаточно firewall **TCP 443**. Отдельный порт **4443** для Keycloak больше не используется (опциональный Traefik entrypoint: [deploy/k8s/traefik-entrypoint-4443/](deploy/k8s/traefik-entrypoint-4443/)).
 
@@ -149,12 +149,12 @@ S="${TAG}-${ARCH}"
 ### Порядок apply (production)
 
 1. **DNS** для `auth.wolfpack…` → тот же LB/VPS, что и основной сайт.
-2. **Keycloak** — см. [Keycloak: чистый деплой](#keycloak-clean-deploy). `keycloak-secrets.yaml` → `kubectl apply -k deploy/k8s/keycloak/` → **`wolfpackcloud-auth`**.
+2. **Keycloak** — см. [Keycloak: чистый деплой](#keycloak-clean-deploy). `wolfpackcloud-auth-secrets.yaml` → `kubectl apply -k deploy/k8s/wolfpackcloud-auth/` → **`wolfpackcloud-auth`**.
 3. Если realm **уже импортирован**, `IGNORE_EXISTING` не обновит клиента: в Admin → **wolfpack-control** → **wolfpack-control-web** проверьте **Web origins** (`https://wolfpack…` и `https://auth.wolfpack…`, без `:4443`).
 4. **Роли:** realm/client role **`admin`**; либо **`CONTROL_ADMIN_USERNAMES`** в Secret API.
 5. **Control:** `control-infra-secrets.yaml`, `api-secret.yaml` → `kubectl apply -k deploy/k8s/control/` → **`wolfpackcloud-control`**.
 6. **InfluxDB** — [deploy/k8s/influxdb/README.md](deploy/k8s/influxdb/README.md); тот же `INFLUXDB_TOKEN` в `control-api-env`.
-7. **Rosout-bridge:** Secret в **`wolfpackcloud-zenoh`**, `kubectl apply -k deploy/k8s/rosout-bridge/`.
+7. **Rosout-bridge:** Secret в **`wolfpackcloud-zenoh`**, `kubectl apply -k deploy/k8s/rosout-bridge/` (планирование: arm64 worker, failover — [deploy/k8s/rosout-bridge/README.md](deploy/k8s/rosout-bridge/README.md)).
 8. Миграция **`004`** (drop `ros_log_entries`): `kubectl exec -n wolfpackcloud-control deploy/control-api -- alembic upgrade head`.
 9. **robot-agent** (опционально) — [deploy/k8s/robot-agent/README.md](deploy/k8s/robot-agent/README.md).
 
@@ -166,13 +166,13 @@ S="${TAG}-${ARCH}"
 
 ```bash
 cd WolfpackCloud-control
-# cp deploy/k8s/keycloak/keycloak-secrets.example.yaml deploy/k8s/keycloak/keycloak-secrets.yaml
-kubectl apply -f deploy/k8s/keycloak/keycloak-secrets.yaml
-kubectl apply -k deploy/k8s/keycloak/
-kubectl rollout status deployment/keycloak -n wolfpackcloud-auth --timeout=600s
+# cp deploy/k8s/wolfpackcloud-auth/wolfpackcloud-auth-secrets.example.yaml deploy/k8s/wolfpackcloud-auth/wolfpackcloud-auth-secrets.yaml
+kubectl apply -f deploy/k8s/wolfpackcloud-auth/wolfpackcloud-auth-secrets.yaml
+kubectl apply -k deploy/k8s/wolfpackcloud-auth/
+kubectl rollout status deployment/wolfpackcloud-auth -n wolfpackcloud-auth --timeout=600s
 ```
 
-1. Admin Console: `https://auth.wolfpack.robotics-rtuitlab.ru/admin` — bootstrap **`admin`** / пароль из **`keycloak-admin-secret`** (master realm, не пользователь приложения).
+1. Admin Console: `https://auth.wolfpack.robotics-rtuitlab.ru/admin` — bootstrap **`admin`** / пароль из **`wolfpackcloud-auth-admin-secret`** (master realm, не пользователь приложения).
 2. Realm **`wolfpack-control`** → **Users** → создать пользователя, **Email verified**, пароль без **Temporary**.
 3. **Role mapping:** **`user`**; для оркестрации — **`admin`**.
 4. Вход в UI/Swagger — этот пользователь realm (PKCE или password grant для k6).

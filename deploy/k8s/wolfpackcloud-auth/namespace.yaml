@@ -4,3 +4,4 @@ metadata:
   name: wolfpackcloud-auth
   labels:
     app.kubernetes.io/name: wolfpackcloud-auth
+    app.kubernetes.io/part-of: wolfpackcloud-auth

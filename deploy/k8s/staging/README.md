@@ -27,13 +27,13 @@ Ephemeral namespace **`wolfpackcloud-control-staging`**: поднимается 
 cd WolfpackCloud-control
 
 # 1. Keycloak: staging realm (общий Keycloak в wolfpackcloud-auth)
-kubectl apply -k deploy/k8s/keycloak/
+kubectl apply -k deploy/k8s/wolfpackcloud-auth/
 # После рестарта Keycloak импортирует wolfpack-control-realm-staging.json (IGNORE_EXISTING).
 
 # 2. Учётки load test (пароли не в git)
-cp deploy/k8s/keycloak/loadtest-credentials.example.yaml deploy/k8s/keycloak/loadtest-credentials.yaml
+cp deploy/k8s/wolfpackcloud-auth/loadtest-credentials.example.yaml deploy/k8s/wolfpackcloud-auth/loadtest-credentials.yaml
 # отредактируйте password / user-password
-kubectl apply -f deploy/k8s/keycloak/loadtest-credentials.yaml
+kubectl apply -f deploy/k8s/wolfpackcloud-auth/loadtest-credentials.yaml
 chmod +x scripts/keycloak-seed-staging-users.sh
 ./scripts/keycloak-seed-staging-users.sh
 

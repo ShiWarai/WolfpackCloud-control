@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NS="${STAGING_NS:-wolfpackcloud-control-staging}"
 STAGING_K="${ROOT}/deploy/k8s/staging"
-KC_DIR="${ROOT}/deploy/k8s/keycloak"
+KC_DIR="${ROOT}/deploy/k8s/wolfpackcloud-auth"
 WAIT="${STAGING_ROLLOUT_TIMEOUT:-300s}"
 
 die() { echo "staging-up: $*" >&2; exit 1; }

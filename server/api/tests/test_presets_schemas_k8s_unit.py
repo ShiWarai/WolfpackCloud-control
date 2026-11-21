@@ -62,7 +62,7 @@ def test_build_robot_agent_deployment_privileged_from_preset():
     dep = build_preset_robot_agent_deployment(
         settings=Settings(),
         preset=preset,
-        node_hostname="sber",
+        node_hostname="pc-sber-robotics",
         image="example/robot-agent:latest",
     )
     container = dep.spec.template.spec.containers[0]

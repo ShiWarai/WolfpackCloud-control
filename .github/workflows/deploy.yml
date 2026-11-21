@@ -1,0 +1,454 @@
+name: Deploy
+
+# Тестовые сборки на каждый push в main/dev.
+# Публикация :prerelease — push в dev с "[prerelease]" в сообщении коммита
+# (или workflow_dispatch с флажком), только после успешных тестов.
+# Публикация :main — через publish.yml (гейт: успешный завершённый Deploy на main).
+
+on:
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+    inputs:
+      publish_prerelease:
+        description: "Собрать и опубликовать предварительные образы в GHCR (тег :prerelease)"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
+  REGISTRY_OWNER: "${{ toLower(github.repository_owner) }}"
+
+jobs:
+  # ---------- Корректность: тесты API + линтинг + сборка клиента ----------
+
+  api-tests:
+    name: Control API tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: server/api
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+          cache-dependency-path: |
+            server/api/requirements.txt
+            server/api/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: python -m ruff check .
+
+      # Тесты на SQLite in-memory (см. tests/conftest.py) — внешние сервисы не нужны.
+      - name: Tests (pytest + coverage)
+        run: python -m pytest tests/ --cov=app --cov-report=term-missing
+
+  client-build:
+    name: Web client build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # npm run build = vue-tsc -b (проверка типов) + vite build
+      - name: Build (type-check + bundle)
+        run: npm run build
+
+  # ---------- Тестовые сборки образов (load, без push) на каждый push ----------
+
+  test-api:
+    name: test api image (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build (load, no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: server/api
+          file: server/api/Dockerfile
+          target: production
+          platforms: linux/${{ matrix.arch }}
+          tags: wolfpackcloud-control-api:test-${{ matrix.arch }}
+          load: true
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=api-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=api-${{ matrix.arch }}
+
+  test-client:
+    name: test client image (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build (load, no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: client
+          file: client/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          build-args: |
+            VITE_API_URL=/api
+            VITE_API_BASE_URL=/api
+          tags: wolfpackcloud-control-client:test-${{ matrix.arch }}
+          load: true
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=client-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=client-${{ matrix.arch }}
+
+  test-robot-agent:
+    name: test robot-agent image (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build (load, no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: robot-agent
+          file: robot-agent/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          tags: wolfpackcloud-control-robot-agent:test-${{ matrix.arch }}
+          load: true
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=robot-agent-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=robot-agent-${{ matrix.arch }}
+
+  test-rosout-bridge:
+    name: test rosout-bridge image (amd64)
+    # ROS Humble (jammy) — только amd64, чтобы не зависеть от arm-образов ROS.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build (load, no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: rosout-bridge
+          file: rosout-bridge/Dockerfile
+          platforms: linux/amd64
+          tags: wolfpackcloud-control-rosout-bridge:test
+          load: true
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=rosout-bridge
+          cache-to: type=gha,mode=max,scope=rosout-bridge
+
+  # ---------- Prerelease (только по флагу / [prerelease] на dev) ----------
+
+  prerelease-api:
+    name: prerelease api (${{ matrix.arch }})
+    needs: [api-tests, client-build, test-api, test-client, test-robot-agent, test-rosout-bridge]
+    if: |
+      needs.api-tests.result == 'success' && needs.client-build.result == 'success'
+      && needs.test-api.result == 'success' && needs.test-client.result == 'success'
+      && needs.test-robot-agent.result == 'success' && needs.test-rosout-bridge.result == 'success'
+      && (
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_prerelease == 'true')
+        || (github.event_name == 'push' && github.ref == 'refs/heads/dev' && contains(github.event.head_commit.message, '[prerelease]'))
+      )
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push per-arch (prerelease)
+        uses: docker/build-push-action@v6
+        with:
+          context: server/api
+          file: server/api/Dockerfile
+          target: production
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-api:${{ matrix.arch }}-prerelease
+            ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-api:${{ matrix.arch }}-${{ github.sha }}
+          cache-from: type=gha,scope=api-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=api-${{ matrix.arch }}
+
+  prerelease-client:
+    name: prerelease client (${{ matrix.arch }})
+    needs: [api-tests, client-build, test-api, test-client, test-robot-agent, test-rosout-bridge]
+    if: |
+      needs.api-tests.result == 'success' && needs.client-build.result == 'success'
+      && needs.test-api.result == 'success' && needs.test-client.result == 'success'
+      && needs.test-robot-agent.result == 'success' && needs.test-rosout-bridge.result == 'success'
+      && (
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_prerelease == 'true')
+        || (github.event_name == 'push' && github.ref == 'refs/heads/dev' && contains(github.event.head_commit.message, '[prerelease]'))
+      )
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push per-arch (prerelease)
+        uses: docker/build-push-action@v6
+        with:
+          context: client
+          file: client/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          build-args: |
+            VITE_API_URL=/api
+            VITE_API_BASE_URL=/api
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-client:${{ matrix.arch }}-prerelease
+            ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-client:${{ matrix.arch }}-${{ github.sha }}
+          cache-from: type=gha,scope=client-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=client-${{ matrix.arch }}
+
+  prerelease-robot-agent:
+    name: prerelease robot-agent (${{ matrix.arch }})
+    needs: [api-tests, client-build, test-api, test-client, test-robot-agent, test-rosout-bridge]
+    if: |
+      needs.api-tests.result == 'success' && needs.client-build.result == 'success'
+      && needs.test-api.result == 'success' && needs.test-client.result == 'success'
+      && needs.test-robot-agent.result == 'success' && needs.test-rosout-bridge.result == 'success'
+      && (
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_prerelease == 'true')
+        || (github.event_name == 'push' && github.ref == 'refs/heads/dev' && contains(github.event.head_commit.message, '[prerelease]'))
+      )
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push per-arch (prerelease)
+        uses: docker/build-push-action@v6
+        with:
+          context: robot-agent
+          file: robot-agent/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-robot-agent:${{ matrix.arch }}-prerelease
+            ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-robot-agent:${{ matrix.arch }}-${{ github.sha }}
+          cache-from: type=gha,scope=robot-agent-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=robot-agent-${{ matrix.arch }}
+
+  prerelease-rosout-bridge:
+    name: prerelease rosout-bridge (amd64)
+    needs: [api-tests, client-build, test-api, test-client, test-robot-agent, test-rosout-bridge]
+    if: |
+      needs.api-tests.result == 'success' && needs.client-build.result == 'success'
+      && needs.test-api.result == 'success' && needs.test-client.result == 'success'
+      && needs.test-robot-agent.result == 'success' && needs.test-rosout-bridge.result == 'success'
+      && (
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_prerelease == 'true')
+        || (github.event_name == 'push' && github.ref == 'refs/heads/dev' && contains(github.event.head_commit.message, '[prerelease]'))
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (prerelease)
+        uses: docker/build-push-action@v6
+        with:
+          context: rosout-bridge
+          file: rosout-bridge/Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-rosout-bridge:prerelease
+            ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-rosout-bridge:${{ github.sha }}
+          cache-from: type=gha,scope=rosout-bridge
+          cache-to: type=gha,mode=max,scope=rosout-bridge
+
+  # ---------- Multiarch-манифесты :prerelease ----------
+
+  prerelease-api-manifest:
+    name: api prerelease manifest
+    needs: [prerelease-api]
+    if: needs.prerelease-api.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Merge arch tags into multiarch :prerelease
+        run: |
+          set -euo pipefail
+          IMG="ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-api"
+          docker buildx imagetools create \
+            -t "${IMG}:prerelease" \
+            -t "${IMG}:${GITHUB_SHA}" \
+            "${IMG}:amd64-prerelease" "${IMG}:arm64-prerelease"
+
+  prerelease-client-manifest:
+    name: client prerelease manifest
+    needs: [prerelease-client]
+    if: needs.prerelease-client.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Merge arch tags into multiarch :prerelease
+        run: |
+          set -euo pipefail
+          IMG="ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-client"
+          docker buildx imagetools create \
+            -t "${IMG}:prerelease" \
+            -t "${IMG}:${GITHUB_SHA}" \
+            "${IMG}:amd64-prerelease" "${IMG}:arm64-prerelease"
+
+  prerelease-robot-agent-manifest:
+    name: robot-agent prerelease manifest
+    needs: [prerelease-robot-agent]
+    if: needs.prerelease-robot-agent.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Merge arch tags into multiarch :prerelease
+        run: |
+          set -euo pipefail
+          IMG="ghcr.io/${{ env.REGISTRY_OWNER }}/wolfpackcloud-control-robot-agent"
+          docker buildx imagetools create \
+            -t "${IMG}:prerelease" \
+            -t "${IMG}:${GITHUB_SHA}" \
+            "${IMG}:amd64-prerelease" "${IMG}:arm64-prerelease"

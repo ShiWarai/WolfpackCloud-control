@@ -26,14 +26,14 @@ read_secret() {
 }
 
 ADMIN_USER="${KEYCLOAK_ADMIN_USER:-admin}"
-ADMIN_PASS="$(kubectl get secret keycloak-admin-secret -n "$KC_AUTH_NS" -o jsonpath='{.data.admin-password}' | base64 -d)"
+ADMIN_PASS="$(kubectl get secret wolfpackcloud-auth-admin-secret -n "$KC_AUTH_NS" -o jsonpath='{.data.admin-password}' | base64 -d)"
 ADMIN_USER_PASS="${LOADTEST_ADMIN_PASSWORD:-$(read_secret password)}"
 ADMIN_USERNAME="${LOADTEST_ADMIN_USERNAME:-$(read_secret username)}"
 USER_PASS="${LOADTEST_USER_PASSWORD:-$(read_secret user-password)}"
 USER_USERNAME="${LOADTEST_USER_USERNAME:-$(read_secret user-username)}"
 
 if [[ -z "$ADMIN_PASS" || -z "$ADMIN_USER_PASS" || -z "$USER_PASS" ]]; then
-  echo "Задайте Secret $CRED_SECRET в $CRED_NS (см. deploy/k8s/keycloak/loadtest-credentials.example.yaml)" >&2
+  echo "Задайте Secret $CRED_SECRET в $CRED_NS (см. deploy/k8s/wolfpackcloud-auth/loadtest-credentials.example.yaml)" >&2
   exit 1
 fi
 

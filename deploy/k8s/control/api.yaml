@@ -18,7 +18,10 @@ metadata:
 spec:
   replicas: 1
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: control-api
@@ -35,11 +38,18 @@ spec:
                   - key: kubernetes.io/arch
                     operator: In
                     values: ["arm64"]
-                  - key: kubernetes.io/hostname
+                  - key: wolfpack.io/role
                     operator: In
-                    values:
-                      - orangepi5-abandon-alien
-                      - orangepi5-water-melon
+                    values: ["worker"]
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 180
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 180
       serviceAccountName: control-api
       containers:
         - name: api
@@ -59,6 +69,8 @@ spec:
               port: 8000
             initialDelaySeconds: 15
             periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 3
           resources:
             requests:
               cpu: "1500m"

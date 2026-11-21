@@ -7,7 +7,7 @@ API эндпоинты для привязки роботов.
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -43,6 +43,20 @@ def _as_utc_aware(value: datetime) -> datetime:
 def generate_influxdb_token() -> str:
     """Генерирует токен для InfluxDB."""
     return secrets.token_urlsafe(32)
+
+
+def _verify_agent_secret(pair_code: PairCode, x_agent_secret: str | None) -> None:
+    expected = (pair_code.agent_secret or "").strip()
+    if not expected:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Секрет агента не задан — перерегистрируйте робота",
+        )
+    if not x_agent_secret or x_agent_secret.strip() != expected:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Неверный секрет агента",
+        )
 
 
 @router.post(
@@ -90,6 +104,8 @@ async def register_robot(
     db.add(robot)
     await db.flush()
 
+    agent_secret = secrets.token_urlsafe(32)
+
     # Создаём код привязки
     expires_at = _utc_now() + timedelta(minutes=settings.pair_code_expiration_minutes)
     pair_code = PairCode(
@@ -97,6 +113,7 @@ async def register_robot(
         robot_id=robot.id,
         status=PairCodeStatus.PENDING,
         expires_at=expires_at,
+        agent_secret=agent_secret,
     )
     db.add(pair_code)
     await db.commit()
@@ -106,6 +123,7 @@ async def register_robot(
         pair_code=request.pair_code,
         status=PairCodeStatus.PENDING,
         expires_at=expires_at,
+        agent_secret=agent_secret,
         influxdb_token=None,
         message=f"Робот зарегистрирован. Код привязки: {request.pair_code}. "
         f"Подтвердите привязку в панели управления в течение {settings.pair_code_expiration_minutes} минут.",
@@ -123,6 +141,7 @@ async def register_robot(
 )
 async def get_pair_code_info(
     code: str,
+    _current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> PairCodeInfoResponse:
     """Получает информацию о коде привязки."""
@@ -160,6 +179,7 @@ async def get_pair_code_info(
 )
 async def get_pair_status(
     code: str,
+    x_agent_secret: str | None = Header(None, alias="X-Agent-Secret"),
     db: AsyncSession = Depends(get_db),
 ) -> PairStatusResponse:
     """
@@ -187,6 +207,7 @@ async def get_pair_status(
     robot = pair_code.robot
 
     if pair_code.status == PairCodeStatus.CONFIRMED:
+        _verify_agent_secret(pair_code, x_agent_secret)
         return PairStatusResponse(
             status=pair_code.status,
             robot_id=robot.id,
